@@ -1,18 +1,17 @@
 package models
 
 import (
-	"time"
 	"net"
+	"time"
 )
 
 type Event struct {
-	DataID []byte
-	Author []byte
-	IP net.IPAddr
+	DataID   []byte
+	Author   []byte
+	IP       net.IPAddr
 	DateTime time.Time
 }
 
-
-type History stuct {
+type History struct {
 	Events []Event
 }
