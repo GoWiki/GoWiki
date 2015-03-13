@@ -2,6 +2,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -50,6 +51,8 @@ func PageHandler(rw http.ResponseWriter, req *http.Request) {
 	vars := mux.Vars(req)
 	DB.View(func(tx *bolt.Tx) error {
 		page, _ := GetPage(tx, vars["page"])
+		jsondata, _ := json.Marshal(page)
+		rw.Write(jsondata)
 		if page != nil {
 			pagedata := page.Current.GetData(tx)
 			unsafe := blackfriday.MarkdownCommon(pagedata)
@@ -72,7 +75,9 @@ func UpdateHandler(rw http.ResponseWriter, req *http.Request) {
 			page = &Page{}
 		}
 		page.Current = Event{DataID: key, IP: req.RemoteAddr}
-		page.Save(tx, vars["page"])
+		data, _ := json.Marshal(page)
+		rw.Write(data)
+		fmt.Println(page.Save(tx, vars["page"]))
 		return nil
 	})
 	PageHandler(rw, req)

@@ -30,6 +30,5 @@ func (p Page) Save(tx *bolt.Tx, Name string) error {
 	}
 	b_names := tx.Bucket(pages).Bucket(names)
 
-	b_names.Put([]byte(Name), data)
-	return nil
+	return b_names.Put([]byte(Name), data)
 }
