@@ -2,22 +2,19 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 
 	"github.com/boltdb/bolt"
 	"github.com/gorilla/mux"
+	"github.com/microcosm-cc/bluemonday"
+	"github.com/russross/blackfriday"
 )
 
 var (
 	DB *bolt.DB
 )
-
-type PageInfo struct {
-	DataID []byte
-}
 
 func main() {
 	db, err := bolt.Open("gowiki.db", 0600, nil)
@@ -27,13 +24,10 @@ func main() {
 	}
 	defer db.Close()
 	err = db.Update(func(tx *bolt.Tx) error {
-		tx.CreateBucketIfNotExists([]byte("pages"))
-		pages := tx.Bucket([]byte("pages"))
-		pages.CreateBucketIfNotExists([]byte("data"))
-		pages.CreateBucketIfNotExists([]byte("history"))
-		pages.CreateBucketIfNotExists([]byte("names"))
+		SetupBuckets(tx)
 		return nil
 	})
+
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -55,13 +49,12 @@ func HomeHandler(rw http.ResponseWriter, req *http.Request) {
 func PageHandler(rw http.ResponseWriter, req *http.Request) {
 	vars := mux.Vars(req)
 	DB.View(func(tx *bolt.Tx) error {
-		pages := tx.Bucket([]byte("pages"))
-		pageinfo := pages.Bucket([]byte("names")).Get([]byte(vars["page"]))
-		if pageinfo != nil {
-			var pi PageInfo
-			json.Unmarshal(pageinfo, &pi)
-			pagedata := pages.Bucket([]byte("data")).Get(pi.DataID)
-			rw.Write(pagedata)
+		page, _ := GetPage(tx, vars["page"])
+		if page != nil {
+			pagedata := page.Current.GetData(tx)
+			unsafe := blackfriday.MarkdownCommon(pagedata)
+			html := bluemonday.UGCPolicy().SanitizeBytes(unsafe)
+			rw.Write(html)
 		}
 		return nil
 	})
@@ -71,33 +64,18 @@ func PageHandler(rw http.ResponseWriter, req *http.Request) {
 func UpdateHandler(rw http.ResponseWriter, req *http.Request) {
 	vars := mux.Vars(req)
 	DB.Update(func(tx *bolt.Tx) error {
-		pages := tx.Bucket([]byte("pages"))
-		names := pages.Bucket([]byte("names"))
-		pageinfo := names.Get([]byte(vars["page"]))
-		var pi PageInfo
-		if pageinfo != nil {
-			json.Unmarshal(pageinfo, &pi)
+		page, _ := GetPage(tx, vars["page"])
+		key, _ := SaveData(tx, []byte(req.FormValue("data")))
+		if page != nil {
+			//page.History.Events = append(page.History.Events, page.Current)
+		} else {
+			page = &Page{}
 		}
-
-		data := pages.Bucket([]byte("data"))
-		dataid := NextKey(data)
-
-		pi.DataID = dataid
-
-		data.Put(dataid, []byte(req.FormValue("data")))
-
-		pageinfo, _ = json.Marshal(&pi)
-
-		names.Put([]byte(vars["page"]), pageinfo)
+		page.Current = Event{DataID: key, IP: req.RemoteAddr}
+		page.Save(tx, vars["page"])
 		return nil
 	})
 	PageHandler(rw, req)
-}
-
-func NextKey(b *bolt.Bucket) []byte {
-	i, _ := b.NextSequence()
-	key, _ := json.Marshal(i)
-	return key
 }
 
 func EditHandler(rw http.ResponseWriter, req *http.Request) {
