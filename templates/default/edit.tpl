@@ -7,7 +7,7 @@
 
 
 
-    <title>GoWiki - {{.Name}}</title>
+    <title>GoWiki - {{.Name}} - Edit</title>
 
     <link href="/static/css/bootstrap.min.css" rel="stylesheet">
     <!--[if lt IE 9]>
@@ -20,12 +20,14 @@
 <div class="container">
 <div class="row">
 <div class="col-sm-3">
-{{GetContent "sidebar"}}
 </div>
 <div class="col-sm-9">
-{{template "page_nav.tpl" PageNav .Slug "Read"}}
+{{template "page_nav.tpl" PageNav .Slug "Edit"}}
 <div class="content">
-{{.Content}}
+<form method="POST" action="{{Route .Slug "Update"}}">
+<textarea class="form-control" name="data" rows="20">{{.Content}}</textarea>
+<button type="submit" class="btn btn-default">Save</button>
+</form>
 </div>
 </div>
 

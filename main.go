@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"net/url"
 
 	"github.com/boltdb/bolt"
 	"github.com/gorilla/mux"
@@ -14,12 +15,17 @@ import (
 )
 
 var (
-	DB  *bolt.DB
-	tpl *template.Template
+	DB     *bolt.DB
+	tpl    *template.Template
+	router *mux.Router
 )
 
 func init() {
-	tpl = template.Must(template.ParseGlob("templates/default/*"))
+	tpl = template.Must(template.New("default").Funcs(template.FuncMap{
+		"PageNav":    PageNav,
+		"Route":      Route,
+		"GetContent": GetContent,
+	}).ParseGlob("templates/default/*"))
 }
 
 func main() {
@@ -39,18 +45,52 @@ func main() {
 		return
 	}
 
-	r := mux.NewRouter()
-	r.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir("static/default"))))
-	r.HandleFunc("/{page:.*}/edit", EditHandler).Methods("GET")
-	r.HandleFunc("/{page:.*}", PageHandler).Methods("GET")
-	r.HandleFunc("/{page:.*}", UpdateHandler).Methods("POST")
+	router = mux.NewRouter()
+	router.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir("static/default"))))
+	router.HandleFunc("/{page:.*}/edit", EditHandler).Methods("GET").Name("Edit")
+	router.HandleFunc("/{page:.*}", PageHandler).Methods("GET").Name("Read")
+	router.HandleFunc("/{page:.*}", UpdateHandler).Methods("POST").Name("Update")
 
-	http.ListenAndServe(":3000", r)
-	fmt.Println("Hello World!")
+	http.ListenAndServe(":3000", router)
 }
 
-func HomeHandler(rw http.ResponseWriter, req *http.Request) {
-	fmt.Fprint(rw, "Test")
+type PageNavData struct {
+	Read    string
+	Edit    string
+	Section string
+}
+
+func UrlToPath(url *url.URL, err error) string {
+	if err != nil {
+		panic(err)
+	}
+	return url.Path
+}
+
+func PageNav(Slug string, Section string) PageNavData {
+	return PageNavData{
+		Read:    UrlToPath(router.Get("Read").URLPath("page", Slug)),
+		Edit:    UrlToPath(router.Get("Edit").URLPath("page", Slug)),
+		Section: Section,
+	}
+}
+
+func GetContent(Slug string) (Content template.HTML) {
+	DB.View(func(tx *bolt.Tx) error {
+		page, _ := GetPage(tx, Slug)
+		if page != nil {
+			pagedata := page.Current.GetData(tx)
+			unsafe := blackfriday.MarkdownCommon(pagedata)
+			html := bluemonday.UGCPolicy().SanitizeBytes(unsafe)
+			Content = template.HTML(html)
+		}
+		return nil
+	})
+	return
+}
+
+func Route(Slug string, Route string) string {
+	return UrlToPath(router.Get(Route).URLPath("page", Slug))
 }
 
 func PageHandler(rw http.ResponseWriter, req *http.Request) {
@@ -66,12 +106,16 @@ func PageHandler(rw http.ResponseWriter, req *http.Request) {
 			data := struct {
 				Content template.HTML
 				Name    string
+				Slug    string
 			}{
 				template.HTML(string(html)),
 				vars["page"],
+				vars["page"],
 			}
 
-			tpl.ExecuteTemplate(rw, "view.tpl", data)
+			if err := tpl.ExecuteTemplate(rw, "view.tpl", data); err != nil {
+				fmt.Println(err)
+			}
 		}
 		return nil
 	})
@@ -80,7 +124,7 @@ func PageHandler(rw http.ResponseWriter, req *http.Request) {
 
 func UpdateHandler(rw http.ResponseWriter, req *http.Request) {
 	vars := mux.Vars(req)
-	fmt.Println(DB.Update(func(tx *bolt.Tx) error {
+	DB.Update(func(tx *bolt.Tx) error {
 		page, _ := GetPage(tx, vars["page"])
 		key, _ := SaveData(tx, []byte(req.FormValue("data")))
 		if page != nil {
@@ -89,14 +133,47 @@ func UpdateHandler(rw http.ResponseWriter, req *http.Request) {
 			page = &Page{}
 		}
 		page.Current = Event{DataID: key, IP: req.RemoteAddr}
-		fmt.Println(page.Save(tx, vars["page"]))
+		page.Save(tx, vars["page"])
 		return nil
-	}))
+	})
 	PageHandler(rw, req)
 }
 
 func EditHandler(rw http.ResponseWriter, req *http.Request) {
 	vars := mux.Vars(req)
-	rw.Header().Add("Content-Type", "text/html")
-	fmt.Fprintf(rw, "<form method=\"POST\" action=\"/%s\"><textarea name=\"data\"></textarea><input type=\"submit\"></form>", vars["page"])
+	DB.View(func(tx *bolt.Tx) error {
+		page, _ := GetPage(tx, vars["page"])
+		if page != nil {
+			pagedata := page.Current.GetData(tx)
+			rw.Header().Add("Content-Type", "text/html")
+			data := struct {
+				Content string
+				Name    string
+				Slug    string
+			}{
+				string(pagedata),
+				vars["page"],
+				vars["page"],
+			}
+
+			if err := tpl.ExecuteTemplate(rw, "edit.tpl", data); err != nil {
+				fmt.Println(err)
+			}
+		} else {
+			rw.Header().Add("Content-Type", "text/html")
+			data := struct {
+				Content string
+				Name    string
+				Slug    string
+			}{
+				"",
+				vars["page"],
+				vars["page"],
+			}
+			if err := tpl.ExecuteTemplate(rw, "edit.tpl", data); err != nil {
+				fmt.Println(err)
+			}
+		}
+		return nil
+	})
 }
