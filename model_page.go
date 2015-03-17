@@ -13,10 +13,9 @@ type Page struct {
 
 func GetPage(tx *bolt.Tx, Name string) (*Page, error) {
 	p := tx.Bucket(pages)
-	var page *Page
-	data := p.Bucket(names).Get([]byte(Name))
-	err := json.Unmarshal(data, page)
-
+	page := &Page{}
+	pagedata := p.Bucket(names).Get([]byte(Name))
+	err := json.Unmarshal(pagedata, page)
 	if err != nil {
 		return nil, err
 	}
@@ -24,11 +23,10 @@ func GetPage(tx *bolt.Tx, Name string) (*Page, error) {
 }
 
 func (p Page) Save(tx *bolt.Tx, Name string) error {
-	data, err := json.Marshal(p)
+	pagedata, err := json.Marshal(p)
 	if err != nil {
 		return err
 	}
 	b_names := tx.Bucket(pages).Bucket(names)
-
-	return b_names.Put([]byte(Name), data)
+	return b_names.Put([]byte(Name), pagedata)
 }

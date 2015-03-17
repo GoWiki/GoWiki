@@ -2,8 +2,8 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
+	"html/template"
 	"log"
 	"net/http"
 
@@ -14,8 +14,13 @@ import (
 )
 
 var (
-	DB *bolt.DB
+	DB  *bolt.DB
+	tpl *template.Template
 )
+
+func init() {
+	tpl = template.Must(template.ParseGlob("templates/default/*"))
+}
 
 func main() {
 	db, err := bolt.Open("gowiki.db", 0600, nil)
@@ -35,6 +40,7 @@ func main() {
 	}
 
 	r := mux.NewRouter()
+	r.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir("static/default"))))
 	r.HandleFunc("/{page:.*}/edit", EditHandler).Methods("GET")
 	r.HandleFunc("/{page:.*}", PageHandler).Methods("GET")
 	r.HandleFunc("/{page:.*}", UpdateHandler).Methods("POST")
@@ -51,13 +57,21 @@ func PageHandler(rw http.ResponseWriter, req *http.Request) {
 	vars := mux.Vars(req)
 	DB.View(func(tx *bolt.Tx) error {
 		page, _ := GetPage(tx, vars["page"])
-		jsondata, _ := json.Marshal(page)
-		rw.Write(jsondata)
 		if page != nil {
 			pagedata := page.Current.GetData(tx)
 			unsafe := blackfriday.MarkdownCommon(pagedata)
 			html := bluemonday.UGCPolicy().SanitizeBytes(unsafe)
-			rw.Write(html)
+			rw.Header().Set("Content-Type", "text/html")
+
+			data := struct {
+				Content template.HTML
+				Name    string
+			}{
+				template.HTML(string(html)),
+				vars["page"],
+			}
+
+			tpl.ExecuteTemplate(rw, "view.tpl", data)
 		}
 		return nil
 	})
@@ -66,7 +80,7 @@ func PageHandler(rw http.ResponseWriter, req *http.Request) {
 
 func UpdateHandler(rw http.ResponseWriter, req *http.Request) {
 	vars := mux.Vars(req)
-	DB.Update(func(tx *bolt.Tx) error {
+	fmt.Println(DB.Update(func(tx *bolt.Tx) error {
 		page, _ := GetPage(tx, vars["page"])
 		key, _ := SaveData(tx, []byte(req.FormValue("data")))
 		if page != nil {
@@ -75,11 +89,9 @@ func UpdateHandler(rw http.ResponseWriter, req *http.Request) {
 			page = &Page{}
 		}
 		page.Current = Event{DataID: key, IP: req.RemoteAddr}
-		data, _ := json.Marshal(page)
-		rw.Write(data)
 		fmt.Println(page.Save(tx, vars["page"]))
 		return nil
-	})
+	}))
 	PageHandler(rw, req)
 }
 
