@@ -20,6 +20,7 @@
 <div class="container">
 <div class="row">
 <div class="col-sm-3">
+{{GetContent "sidebar"}}
 </div>
 <div class="col-sm-9">
 {{template "page_nav.tpl" PageNav .Slug "Edit"}}

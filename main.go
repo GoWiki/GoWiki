@@ -10,14 +10,33 @@ import (
 
 	"github.com/boltdb/bolt"
 	"github.com/gorilla/mux"
+	"github.com/m4tty/cajun"
 	"github.com/microcosm-cc/bluemonday"
-	"github.com/russross/blackfriday"
 )
+
+type Wiki struct {
+}
+
+func (w *Wiki) WikiLink(href string, text string) (link string) {
+	DB.View(func(tx *bolt.Tx) error {
+		page, _ := GetPage(tx, href)
+		if page == nil {
+			link = "<a href=\"" + href + "\" class=\"empty-link\">" + text + "</a>"
+		} else {
+			link = "<a href=\"" + href + "\" >" + text + "</a>"
+		}
+		return nil
+	})
+	return
+}
 
 var (
 	DB     *bolt.DB
 	tpl    *template.Template
 	router *mux.Router
+	render *cajun.Cajun
+	wiki   *Wiki
+	policy *bluemonday.Policy
 )
 
 func init() {
@@ -26,6 +45,11 @@ func init() {
 		"Route":      Route,
 		"GetContent": GetContent,
 	}).ParseGlob("templates/default/*"))
+	wiki = &Wiki{}
+	render = cajun.New()
+	render.WikiLink = wiki
+	policy = bluemonday.UGCPolicy()
+	policy.AllowAttrs("class").OnElements("a")
 }
 
 func main() {
@@ -47,9 +71,9 @@ func main() {
 
 	router = mux.NewRouter()
 	router.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir("static/default"))))
-	router.HandleFunc("/{page:.*}/edit", EditHandler).Methods("GET").Name("Edit")
-	router.HandleFunc("/{page:.*}", PageHandler).Methods("GET").Name("Read")
-	router.HandleFunc("/{page:.*}", UpdateHandler).Methods("POST").Name("Update")
+	router.HandleFunc("/{page}/edit", EditHandler).Methods("GET").Name("Edit")
+	router.HandleFunc("/{page}", PageHandler).Methods("GET").Name("Read")
+	router.HandleFunc("/{page}", UpdateHandler).Methods("POST").Name("Update")
 
 	http.ListenAndServe(":3000", router)
 }
@@ -80,8 +104,8 @@ func GetContent(Slug string) (Content template.HTML) {
 		page, _ := GetPage(tx, Slug)
 		if page != nil {
 			pagedata := page.Current.GetData(tx)
-			unsafe := blackfriday.MarkdownCommon(pagedata)
-			html := bluemonday.UGCPolicy().SanitizeBytes(unsafe)
+			unsafe, _ := render.Transform(string(pagedata))
+			html := policy.Sanitize(unsafe)
 			Content = template.HTML(html)
 		}
 		return nil
@@ -99,8 +123,8 @@ func PageHandler(rw http.ResponseWriter, req *http.Request) {
 		page, _ := GetPage(tx, vars["page"])
 		if page != nil {
 			pagedata := page.Current.GetData(tx)
-			unsafe := blackfriday.MarkdownCommon(pagedata)
-			html := bluemonday.UGCPolicy().SanitizeBytes(unsafe)
+			unsafe, _ := render.Transform(string(pagedata))
+			html := policy.Sanitize(unsafe)
 			rw.Header().Set("Content-Type", "text/html")
 
 			data := struct {
@@ -108,7 +132,7 @@ func PageHandler(rw http.ResponseWriter, req *http.Request) {
 				Name    string
 				Slug    string
 			}{
-				template.HTML(string(html)),
+				template.HTML(html),
 				vars["page"],
 				vars["page"],
 			}
@@ -116,6 +140,8 @@ func PageHandler(rw http.ResponseWriter, req *http.Request) {
 			if err := tpl.ExecuteTemplate(rw, "view.tpl", data); err != nil {
 				fmt.Println(err)
 			}
+		} else {
+			EditHandler(rw, req)
 		}
 		return nil
 	})
