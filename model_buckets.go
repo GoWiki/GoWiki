@@ -7,17 +7,19 @@ import (
 )
 
 var (
-	pages   []byte = []byte("pages")
-	history []byte = []byte("history")
-	names   []byte = []byte("names")
-	data    []byte = []byte("data")
+	bn_pages   []byte = []byte("pages")
+	bn_history []byte = []byte("history")
+	bn_names   []byte = []byte("names")
+	bn_data    []byte = []byte("data")
+	bn_users   []byte = []byte("users")
 )
 
 func SetupBuckets(tx *bolt.Tx) {
-	pages, _ := tx.CreateBucketIfNotExists(pages)
-	pages.CreateBucketIfNotExists(history)
-	pages.CreateBucketIfNotExists(names)
-	pages.CreateBucketIfNotExists(data)
+	pages, _ := tx.CreateBucketIfNotExists(bn_pages)
+	pages.CreateBucketIfNotExists(bn_history)
+	pages.CreateBucketIfNotExists(bn_names)
+	pages.CreateBucketIfNotExists(bn_data)
+	tx.CreateBucketIfNotExists(bn_users)
 }
 
 func NextKey(b *bolt.Bucket) []byte {

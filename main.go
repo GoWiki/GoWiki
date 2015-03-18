@@ -7,11 +7,13 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/andyleap/cajun"
 	"github.com/boltdb/bolt"
 	"github.com/gorilla/mux"
+	"github.com/justinas/alice"
 	"github.com/microcosm-cc/bluemonday"
 )
 
@@ -21,15 +23,16 @@ type Wiki struct {
 	router *mux.Router
 	render *cajun.Cajun
 	policy *bluemonday.Policy
+	store  *MemoryStore
 }
 
 func (w *Wiki) WikiLink(href string, text string) (link string) {
 	w.DB.View(func(tx *bolt.Tx) error {
 		page, _ := GetPage(tx, href)
 		if page == nil {
-			link = "<a href=\"" + href + "\" class=\"empty-link\">" + text + "</a>"
+			link = "<a href=\"/" + href + "\" class=\"empty-link\">" + text + "</a>"
 		} else {
-			link = "<a href=\"" + href + "\" >" + text + "</a>"
+			link = "<a href=\"/" + href + "\" >" + text + "</a>"
 		}
 		return nil
 	})
@@ -73,13 +76,19 @@ func New() *Wiki {
 	wiki.render = cajun.New()
 	wiki.render.WikiLink = wiki
 	wiki.policy = bluemonday.UGCPolicy()
-	wiki.policy.AllowAttrs("class").OnElements("a")
+	wiki.policy.AllowAttrs("class").Matching(regexp.MustCompile("empty-link")).OnElements("a")
+	wiki.policy.RequireNoFollowOnLinks(false)
+
+	mainChain := alice.New()
+	authChain := mainChain.Append()
 
 	wiki.router = mux.NewRouter()
 	wiki.router.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir("static/default"))))
-	wiki.router.HandleFunc("/{page:[^/]*}/edit", wiki.EditHandler).Methods("GET").Name("Edit")
-	wiki.router.HandleFunc("/{page:[^/]*}", wiki.PageHandler).Methods("GET").Name("Read")
-	wiki.router.HandleFunc("/{page:[^/]*}", wiki.UpdateHandler).Methods("POST").Name("Update")
+	wiki.router.Handle("/{page:[^/]*}/edit", authChain.ThenFunc(wiki.EditHandler)).Methods("GET").Name("Edit")
+	wiki.router.Handle("/{page:[^/]*}", mainChain.ThenFunc(wiki.PageHandler)).Methods("GET").Name("Read")
+	wiki.router.Handle("/{page:[^/]*}", authChain.ThenFunc(wiki.UpdateHandler)).Methods("POST").Name("Update")
+
+	wiki.store = newMemoryStore([]byte("gowiki"))
 
 	return wiki
 }
@@ -130,7 +139,6 @@ func (w *Wiki) PageHandler(rw http.ResponseWriter, req *http.Request) {
 		if page != nil {
 			pagedata := page.Current.GetData(tx)
 			unsafe, _ := w.render.Transform(string(pagedata))
-			fmt.Println(unsafe)
 			html := w.policy.Sanitize(unsafe)
 			rw.Header().Set("Content-Type", "text/html")
 
@@ -148,7 +156,7 @@ func (w *Wiki) PageHandler(rw http.ResponseWriter, req *http.Request) {
 				fmt.Println(err)
 			}
 		} else {
-			w.EditHandler(rw, req)
+			http.Redirect(rw, req, UrlToPath(w.router.Get("Edit").URLPath("page", vars["page"])), http.StatusTemporaryRedirect)
 		}
 		return nil
 	})
@@ -211,5 +219,17 @@ func (w *Wiki) EditHandler(rw http.ResponseWriter, req *http.Request) {
 			}
 		}
 		return nil
+	})
+}
+
+func (w *Wiki) CheckAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		session, _ := w.store.Get(req, "GoWiki")
+		if loggedin, ok := session.Values["loggedin"]; ok && loggedin.(bool) {
+			next.ServeHTTP(rw, req)
+		} else {
+			rw.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(rw, "Not logged in")
+		}
 	})
 }
