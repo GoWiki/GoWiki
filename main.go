@@ -8,17 +8,22 @@ import (
 	"net/http"
 	"net/url"
 
+	"github.com/andyleap/cajun"
 	"github.com/boltdb/bolt"
 	"github.com/gorilla/mux"
-	"github.com/m4tty/cajun"
 	"github.com/microcosm-cc/bluemonday"
 )
 
 type Wiki struct {
+	DB     *bolt.DB
+	tpl    *template.Template
+	router *mux.Router
+	render *cajun.Cajun
+	policy *bluemonday.Policy
 }
 
 func (w *Wiki) WikiLink(href string, text string) (link string) {
-	DB.View(func(tx *bolt.Tx) error {
+	w.DB.View(func(tx *bolt.Tx) error {
 		page, _ := GetPage(tx, href)
 		if page == nil {
 			link = "<a href=\"" + href + "\" class=\"empty-link\">" + text + "</a>"
@@ -30,52 +35,53 @@ func (w *Wiki) WikiLink(href string, text string) (link string) {
 	return
 }
 
-var (
-	DB     *bolt.DB
-	tpl    *template.Template
-	router *mux.Router
-	render *cajun.Cajun
-	wiki   *Wiki
-	policy *bluemonday.Policy
-)
-
 func init() {
-	tpl = template.Must(template.New("default").Funcs(template.FuncMap{
-		"PageNav":    PageNav,
-		"Route":      Route,
-		"GetContent": GetContent,
-	}).ParseGlob("templates/default/*"))
-	wiki = &Wiki{}
-	render = cajun.New()
-	render.WikiLink = wiki
-	policy = bluemonday.UGCPolicy()
-	policy.AllowAttrs("class").OnElements("a")
+
 }
 
 func main() {
+	wiki := New()
+	fmt.Println("it's working?")
+	http.ListenAndServe(":3000", wiki.router)
+}
+
+func New() *Wiki {
+	wiki := &Wiki{}
 	db, err := bolt.Open("gowiki.db", 0600, nil)
-	DB = db
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer db.Close()
 	err = db.Update(func(tx *bolt.Tx) error {
 		SetupBuckets(tx)
 		return nil
 	})
+	wiki.DB = db
 
 	if err != nil {
 		fmt.Println(err)
-		return
+		return nil
 	}
 
-	router = mux.NewRouter()
-	router.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir("static/default"))))
-	router.HandleFunc("/{page}/edit", EditHandler).Methods("GET").Name("Edit")
-	router.HandleFunc("/{page}", PageHandler).Methods("GET").Name("Read")
-	router.HandleFunc("/{page}", UpdateHandler).Methods("POST").Name("Update")
+	tpl := template.Must(template.New("default").Funcs(template.FuncMap{
+		"PageNav":    wiki.PageNav,
+		"Route":      wiki.Route,
+		"GetContent": wiki.GetContent,
+	}).ParseGlob("templates/default/*"))
 
-	http.ListenAndServe(":3000", router)
+	wiki.tpl = tpl
+
+	wiki.render = cajun.New()
+	wiki.render.WikiLink = wiki
+	wiki.policy = bluemonday.UGCPolicy()
+	wiki.policy.AllowAttrs("class").OnElements("a")
+
+	wiki.router = mux.NewRouter()
+	wiki.router.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir("static/default"))))
+	wiki.router.HandleFunc("/{page}/edit", wiki.EditHandler).Methods("GET").Name("Edit")
+	wiki.router.HandleFunc("/{page}", wiki.PageHandler).Methods("GET").Name("Read")
+	wiki.router.HandleFunc("/{page}", wiki.UpdateHandler).Methods("POST").Name("Update")
+
+	return wiki
 }
 
 type PageNavData struct {
@@ -91,21 +97,22 @@ func UrlToPath(url *url.URL, err error) string {
 	return url.Path
 }
 
-func PageNav(Slug string, Section string) PageNavData {
+func (w *Wiki) PageNav(Slug string, Section string) PageNavData {
 	return PageNavData{
-		Read:    UrlToPath(router.Get("Read").URLPath("page", Slug)),
-		Edit:    UrlToPath(router.Get("Edit").URLPath("page", Slug)),
+		Read:    UrlToPath(w.router.Get("Read").URLPath("page", Slug)),
+		Edit:    UrlToPath(w.router.Get("Edit").URLPath("page", Slug)),
 		Section: Section,
 	}
 }
 
-func GetContent(Slug string) (Content template.HTML) {
-	DB.View(func(tx *bolt.Tx) error {
+func (w *Wiki) GetContent(Slug string) (Content template.HTML) {
+	w.DB.View(func(tx *bolt.Tx) error {
 		page, _ := GetPage(tx, Slug)
 		if page != nil {
 			pagedata := page.Current.GetData(tx)
-			unsafe, _ := render.Transform(string(pagedata))
-			html := policy.Sanitize(unsafe)
+			unsafe, _ := w.render.Transform(string(pagedata))
+			fmt.Println(unsafe)
+			html := w.policy.Sanitize(unsafe)
 			Content = template.HTML(html)
 		}
 		return nil
@@ -113,18 +120,18 @@ func GetContent(Slug string) (Content template.HTML) {
 	return
 }
 
-func Route(Slug string, Route string) string {
-	return UrlToPath(router.Get(Route).URLPath("page", Slug))
+func (w *Wiki) Route(Slug string, Route string) string {
+	return UrlToPath(w.router.Get(Route).URLPath("page", Slug))
 }
 
-func PageHandler(rw http.ResponseWriter, req *http.Request) {
+func (w *Wiki) PageHandler(rw http.ResponseWriter, req *http.Request) {
 	vars := mux.Vars(req)
-	DB.View(func(tx *bolt.Tx) error {
+	w.DB.View(func(tx *bolt.Tx) error {
 		page, _ := GetPage(tx, vars["page"])
 		if page != nil {
 			pagedata := page.Current.GetData(tx)
-			unsafe, _ := render.Transform(string(pagedata))
-			html := policy.Sanitize(unsafe)
+			unsafe, _ := w.render.Transform(string(pagedata))
+			html := w.policy.Sanitize(unsafe)
 			rw.Header().Set("Content-Type", "text/html")
 
 			data := struct {
@@ -137,20 +144,20 @@ func PageHandler(rw http.ResponseWriter, req *http.Request) {
 				vars["page"],
 			}
 
-			if err := tpl.ExecuteTemplate(rw, "view.tpl", data); err != nil {
+			if err := w.tpl.ExecuteTemplate(rw, "view.tpl", data); err != nil {
 				fmt.Println(err)
 			}
 		} else {
-			EditHandler(rw, req)
+			w.EditHandler(rw, req)
 		}
 		return nil
 	})
 
 }
 
-func UpdateHandler(rw http.ResponseWriter, req *http.Request) {
+func (w *Wiki) UpdateHandler(rw http.ResponseWriter, req *http.Request) {
 	vars := mux.Vars(req)
-	DB.Update(func(tx *bolt.Tx) error {
+	w.DB.Update(func(tx *bolt.Tx) error {
 		page, _ := GetPage(tx, vars["page"])
 		key, _ := SaveData(tx, []byte(req.FormValue("data")))
 		if page != nil {
@@ -162,12 +169,12 @@ func UpdateHandler(rw http.ResponseWriter, req *http.Request) {
 		page.Save(tx, vars["page"])
 		return nil
 	})
-	PageHandler(rw, req)
+	w.PageHandler(rw, req)
 }
 
-func EditHandler(rw http.ResponseWriter, req *http.Request) {
+func (w *Wiki) EditHandler(rw http.ResponseWriter, req *http.Request) {
 	vars := mux.Vars(req)
-	DB.View(func(tx *bolt.Tx) error {
+	w.DB.View(func(tx *bolt.Tx) error {
 		page, _ := GetPage(tx, vars["page"])
 		if page != nil {
 			pagedata := page.Current.GetData(tx)
@@ -182,7 +189,7 @@ func EditHandler(rw http.ResponseWriter, req *http.Request) {
 				vars["page"],
 			}
 
-			if err := tpl.ExecuteTemplate(rw, "edit.tpl", data); err != nil {
+			if err := w.tpl.ExecuteTemplate(rw, "edit.tpl", data); err != nil {
 				fmt.Println(err)
 			}
 		} else {
@@ -196,7 +203,7 @@ func EditHandler(rw http.ResponseWriter, req *http.Request) {
 				vars["page"],
 				vars["page"],
 			}
-			if err := tpl.ExecuteTemplate(rw, "edit.tpl", data); err != nil {
+			if err := w.tpl.ExecuteTemplate(rw, "edit.tpl", data); err != nil {
 				fmt.Println(err)
 			}
 		}

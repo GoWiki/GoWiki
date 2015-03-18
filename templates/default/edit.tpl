@@ -44,7 +44,8 @@
 <div class="content">
 <form method="POST" action="{{Route .Slug "Update"}}">
 <textarea class="form-control" name="data" rows="20">{{.Content}}</textarea>
-<button type="submit" class="btn btn-default">Save</button>
+<button type="submit" class="btn btn-primary">Save</button>
+<a href="{{Route .Slug "Read"}}" class="btn btn-danger">Cancel</a>
 </form>
 </div>
 </div>
