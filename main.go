@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/andyleap/cajun"
 	"github.com/boltdb/bolt"
@@ -41,7 +42,6 @@ func init() {
 
 func main() {
 	wiki := New()
-	fmt.Println("it's working?")
 	http.ListenAndServe(":3000", wiki.router)
 }
 
@@ -77,9 +77,9 @@ func New() *Wiki {
 
 	wiki.router = mux.NewRouter()
 	wiki.router.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir("static/default"))))
-	wiki.router.HandleFunc("/{page}/edit", wiki.EditHandler).Methods("GET").Name("Edit")
-	wiki.router.HandleFunc("/{page}", wiki.PageHandler).Methods("GET").Name("Read")
-	wiki.router.HandleFunc("/{page}", wiki.UpdateHandler).Methods("POST").Name("Update")
+	wiki.router.HandleFunc("/{page:[^/]*}/edit", wiki.EditHandler).Methods("GET").Name("Edit")
+	wiki.router.HandleFunc("/{page:[^/]*}", wiki.PageHandler).Methods("GET").Name("Read")
+	wiki.router.HandleFunc("/{page:[^/]*}", wiki.UpdateHandler).Methods("POST").Name("Update")
 
 	return wiki
 }
@@ -111,7 +111,6 @@ func (w *Wiki) GetContent(Slug string) (Content template.HTML) {
 		if page != nil {
 			pagedata := page.Current.GetData(tx)
 			unsafe, _ := w.render.Transform(string(pagedata))
-			fmt.Println(unsafe)
 			html := w.policy.Sanitize(unsafe)
 			Content = template.HTML(html)
 		}
@@ -131,6 +130,7 @@ func (w *Wiki) PageHandler(rw http.ResponseWriter, req *http.Request) {
 		if page != nil {
 			pagedata := page.Current.GetData(tx)
 			unsafe, _ := w.render.Transform(string(pagedata))
+			fmt.Println(unsafe)
 			html := w.policy.Sanitize(unsafe)
 			rw.Header().Set("Content-Type", "text/html")
 
@@ -159,7 +159,10 @@ func (w *Wiki) UpdateHandler(rw http.ResponseWriter, req *http.Request) {
 	vars := mux.Vars(req)
 	w.DB.Update(func(tx *bolt.Tx) error {
 		page, _ := GetPage(tx, vars["page"])
-		key, _ := SaveData(tx, []byte(req.FormValue("data")))
+		data := req.FormValue("data")
+		data = strings.Replace(data, "\r\n", "\n", -1)
+
+		key, _ := SaveData(tx, []byte(data))
 		if page != nil {
 			//page.History.Events = append(page.History.Events, page.Current)
 		} else {

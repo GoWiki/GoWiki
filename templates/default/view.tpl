@@ -42,7 +42,6 @@
 <div class="col-sm-9">
 {{template "page_nav.tpl" PageNav .Slug "Read"}}
 <div class="content">
-<h1>{{.Name}}</h1>
 {{.Content}}
 </div>
 </div>
