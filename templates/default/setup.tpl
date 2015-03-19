@@ -7,14 +7,14 @@
 
 
 
-    <title>GoWiki - {{.Name}} - Edit</title>
+    <title>GoWiki - {{.Name}}</title>
 
     <link href="/static/css/bootstrap.min.css" rel="stylesheet">
     <!--[if lt IE 9]>
       <script src="https://oss.maxcdn.com/html5shiv/3.7.2/html5shiv.min.js"></script>
       <script src="https://oss.maxcdn.com/respond/1.4.2/respond.min.js"></script>
     <![endif]-->
-		<style>
+	<style>
 		body {
 			background-color: #F4F4F4;
 		}
@@ -23,6 +23,9 @@
 			padding: 20px;
 			border: 1px solid #ddd;
 			border-top: 0;
+		}
+		.content.no-nav {
+			border-top: 1px solid #ddd;
 		}
 		.content > h1, .content > h2, .content > h3 {
 			margin-top: 10px;
@@ -48,12 +51,12 @@
 {{GetContent "Sidebar"}}
 </div>
 <div class="col-sm-9">
-{{template "page_nav.tpl" PageNav .Slug "Edit"}}
-<div class="content">
-<form method="POST" action="{{Route "Update" "page" .Slug}}">
-<textarea class="form-control" name="data" rows="20">{{.Content}}</textarea>
-<button type="submit" class="btn btn-primary">Save</button>
-<a href="{{Route "Read" "page" .Slug}}" class="btn btn-danger">Cancel</a>
+<div class="content no-nav">
+<form method="POST">
+<h1>Initial Setup</h1>
+<input type="text" name="username" placeholder="Username" class="form-control">
+<input type="password" name="password" placeholder="Password" class="form-control">
+<input type="submit" class="btn btn-primary">
 </form>
 </div>
 </div>

@@ -85,17 +85,22 @@ func New() *Wiki {
 	wiki.gpolicy = &greentuesday.Policy{}
 	wiki.gpolicy.Add = append(wiki.gpolicy.Add, greentuesday.AttrEle{Tag: "table", Attribute: html.Attribute{Key: "class", Val: "table"}})
 
-	mainChain := alice.New()
-	authChain := mainChain.Append()
+	wiki.store = newMemoryStore()
+
+	mainChain := alice.New(wiki.store.ContextClear)
+	authChain := mainChain.Append(wiki.CheckAuth)
 
 	wiki.router = mux.NewRouter()
 	wiki.router.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir("static/default"))))
 	wiki.router.Handle("/", http.RedirectHandler("/Home", http.StatusMovedPermanently))
+	wiki.router.Handle("/Setup/{token}", mainChain.ThenFunc(wiki.SetupFormHandler)).Methods("GET").Name("SetupForm")
+	wiki.router.Handle("/Setup/{token}", mainChain.ThenFunc(wiki.SetupHandler)).Methods("POST").Name("Setup")
+	wiki.router.Handle("/Login", mainChain.ThenFunc(wiki.LoginFormHandler)).Methods("GET").Name("LoginForm")
+	wiki.router.Handle("/Login", mainChain.ThenFunc(wiki.LoginHandler)).Methods("POST").Name("Login")
+
 	wiki.router.Handle("/{page:[^/]*}/edit", authChain.ThenFunc(wiki.EditHandler)).Methods("GET").Name("Edit")
 	wiki.router.Handle("/{page:[^/]*}", mainChain.ThenFunc(wiki.PageHandler)).Methods("GET").Name("Read")
 	wiki.router.Handle("/{page:[^/]*}", authChain.ThenFunc(wiki.UpdateHandler)).Methods("POST").Name("Update")
-
-	wiki.store = newMemoryStore()
 
 	return wiki
 }
@@ -135,8 +140,8 @@ func (w *Wiki) GetContent(Slug string) (Content template.HTML) {
 	return
 }
 
-func (w *Wiki) Route(Slug string, Route string) string {
-	return UrlToPath(w.router.Get(Route).URLPath("page", Slug))
+func (w *Wiki) Route(Route string, Params ...string) string {
+	return UrlToPath(w.router.Get(Route).URLPath(Params...))
 }
 
 func (w *Wiki) PageHandler(rw http.ResponseWriter, req *http.Request) {
@@ -229,14 +234,37 @@ func (w *Wiki) EditHandler(rw http.ResponseWriter, req *http.Request) {
 	})
 }
 
+func (w *Wiki) LoginFormHandler(rw http.ResponseWriter, req *http.Request) {
+	if err := w.tpl.ExecuteTemplate(rw, "login.tpl", nil); err != nil {
+		fmt.Println(err)
+	}
+}
+
+func (w *Wiki) SetupFormHandler(rw http.ResponseWriter, req *http.Request) {
+	if err := w.tpl.ExecuteTemplate(rw, "setup.tpl", nil); err != nil {
+		fmt.Println(err)
+	}
+}
+
+func (w *Wiki) LoginHandler(rw http.ResponseWriter, req *http.Request) {
+	if err := w.tpl.ExecuteTemplate(rw, "login.tpl", nil); err != nil {
+		fmt.Println(err)
+	}
+}
+
+func (w *Wiki) SetupHandler(rw http.ResponseWriter, req *http.Request) {
+	if err := w.tpl.ExecuteTemplate(rw, "setup.tpl", nil); err != nil {
+		fmt.Println(err)
+	}
+}
+
 func (w *Wiki) CheckAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
 		session := w.store.Get(req)
 		if session.User != nil {
 			next.ServeHTTP(rw, req)
 		} else {
-			rw.WriteHeader(http.StatusUnauthorized)
-			fmt.Fprint(rw, "Not logged in")
+			http.Redirect(rw, req, UrlToPath(w.router.Get("LoginForm").URLPath()), http.StatusTemporaryRedirect)
 		}
 	})
 }

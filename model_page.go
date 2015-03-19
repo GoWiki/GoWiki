@@ -11,13 +11,13 @@ type Page struct {
 	History []byte
 }
 
-func GetPage(tx *bolt.Tx, Name string) (*Page, error) {
-	b_names := tx.Bucket(bn_pages).Bucket(bn_names)
+func GetPage(t *bolt.Tx, Name string) (*Page, error) {
+	tx := &TX{t}
 	page := &Page{}
 	if Name == "" {
 		Name = "/"
 	}
-	pagedata := b_names.Get([]byte(Name))
+	pagedata := tx.Pages().Names().Get([]byte(Name))
 	err := json.Unmarshal(pagedata, page)
 	if err != nil {
 		return nil, err
@@ -25,7 +25,8 @@ func GetPage(tx *bolt.Tx, Name string) (*Page, error) {
 	return page, nil
 }
 
-func (p Page) Save(tx *bolt.Tx, Name string) error {
+func (p Page) Save(t *bolt.Tx, Name string) error {
+	tx := &TX{t}
 	pagedata, err := json.Marshal(p)
 	if err != nil {
 		return err
@@ -33,6 +34,6 @@ func (p Page) Save(tx *bolt.Tx, Name string) error {
 	if Name == "" {
 		Name = "/"
 	}
-	b_names := tx.Bucket(bn_pages).Bucket(bn_names)
+	b_names := tx.Pages().Names()
 	return b_names.Put([]byte(Name), pagedata)
 }
