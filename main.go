@@ -90,6 +90,7 @@ func New() *Wiki {
 
 	wiki.router = mux.NewRouter()
 	wiki.router.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir("static/default"))))
+	wiki.router.Handle("/", http.RedirectHandler("/Home", http.StatusMovedPermanently))
 	wiki.router.Handle("/{page:[^/]*}/edit", authChain.ThenFunc(wiki.EditHandler)).Methods("GET").Name("Edit")
 	wiki.router.Handle("/{page:[^/]*}", mainChain.ThenFunc(wiki.PageHandler)).Methods("GET").Name("Read")
 	wiki.router.Handle("/{page:[^/]*}", authChain.ThenFunc(wiki.UpdateHandler)).Methods("POST").Name("Update")
