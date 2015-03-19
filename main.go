@@ -13,17 +13,20 @@ import (
 	"github.com/andyleap/cajun"
 	"github.com/boltdb/bolt"
 	"github.com/gorilla/mux"
+	"github.com/gowiki/greentuesday"
 	"github.com/justinas/alice"
 	"github.com/microcosm-cc/bluemonday"
+	"golang.org/x/net/html"
 )
 
 type Wiki struct {
-	DB     *bolt.DB
-	tpl    *template.Template
-	router *mux.Router
-	render *cajun.Cajun
-	policy *bluemonday.Policy
-	store  *MemoryStore
+	DB      *bolt.DB
+	tpl     *template.Template
+	router  *mux.Router
+	render  *cajun.Cajun
+	policy  *bluemonday.Policy
+	gpolicy *greentuesday.Policy
+	store   *MemoryStore
 }
 
 func (w *Wiki) WikiLink(href string, text string) (link string) {
@@ -79,6 +82,9 @@ func New() *Wiki {
 	wiki.policy.AllowAttrs("class").Matching(regexp.MustCompile("empty-link")).OnElements("a")
 	wiki.policy.RequireNoFollowOnLinks(false)
 
+	wiki.gpolicy = &greentuesday.Policy{}
+	wiki.gpolicy.Add = append(wiki.gpolicy.Add, greentuesday.AttrEle{Tag: "table", Attribute: html.Attribute{Key: "class", Val: "table"}})
+
 	mainChain := alice.New()
 	authChain := mainChain.Append()
 
@@ -88,7 +94,7 @@ func New() *Wiki {
 	wiki.router.Handle("/{page:[^/]*}", mainChain.ThenFunc(wiki.PageHandler)).Methods("GET").Name("Read")
 	wiki.router.Handle("/{page:[^/]*}", authChain.ThenFunc(wiki.UpdateHandler)).Methods("POST").Name("Update")
 
-	wiki.store = newMemoryStore([]byte("gowiki"))
+	wiki.store = newMemoryStore()
 
 	return wiki
 }
@@ -139,7 +145,7 @@ func (w *Wiki) PageHandler(rw http.ResponseWriter, req *http.Request) {
 		if page != nil {
 			pagedata := page.Current.GetData(tx)
 			unsafe, _ := w.render.Transform(string(pagedata))
-			html := w.policy.Sanitize(unsafe)
+			html := w.gpolicy.Massage(w.policy.Sanitize(unsafe))
 			rw.Header().Set("Content-Type", "text/html")
 
 			data := struct {
@@ -224,8 +230,8 @@ func (w *Wiki) EditHandler(rw http.ResponseWriter, req *http.Request) {
 
 func (w *Wiki) CheckAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
-		session, _ := w.store.Get(req, "GoWiki")
-		if loggedin, ok := session.Values["loggedin"]; ok && loggedin.(bool) {
+		session := w.store.Get(req)
+		if session.User != nil {
 			next.ServeHTTP(rw, req)
 		} else {
 			rw.WriteHeader(http.StatusUnauthorized)

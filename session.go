@@ -13,7 +13,7 @@ type Session struct {
 }
 
 type MemoryStore struct {
-	store map[string]Session
+	store map[string]*Session
 	mutex sync.Mutex
 }
 
@@ -25,7 +25,7 @@ func newMemoryStore() *MemoryStore {
 	}
 }
 
-func (m *MemoryStore) Get(r *http.Request) (*Session, error) {
+func (m *MemoryStore) Get(r *http.Request) *Session {
 	c, err := r.Cookie("GoWiki")
 	if err != nil {
 		return &Session{}
@@ -38,5 +38,5 @@ func (m *MemoryStore) Get(r *http.Request) (*Session, error) {
 }
 
 func (m *MemoryStore) Save(r *http.Request, w http.ResponseWriter, s *Session) error {
-
+	return nil
 }
