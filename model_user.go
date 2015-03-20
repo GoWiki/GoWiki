@@ -2,36 +2,47 @@ package main
 
 import (
 	"encoding/json"
+
+	"github.com/boltdb/bolt"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type User struct {
-	ID []byte
+	ID       []byte
 	Name     string
 	Password []byte
 }
 
-func GetUser(t *bolt.Tx, username string) *User, error {
-	tx := &TX{t}
-	user := &User{}
-	userid := tx.Users().Names().Get([]byte(Name))
-	userdata = tx.Users().Data().Get(userid)
-	
-	err := json.Unmarshal(userdata, user)
-	if err != nil {
-		return nil, err
+func GetUser(t *bolt.Tx, name string) *User {
+	tx := TX{t}
+	userid := tx.Users().Names().Get([]byte(name))
+	userdata := tx.Users().Data().Get(userid)
+	if userdata == nil {
+		return nil
 	}
-	return user, nil
-	
+	u := &User{}
+	json.Unmarshal(userdata, u)
+	return u
 }
 
-func (u *User) SaveUser(t *bolt.Tx) {
+func (u *User) Save(t *bolt.Tx) {
 	tx := &TX{t}
-	b_userdata := tx.Users().Data()
 	if u.ID == nil {
-		u.ID = NextKey(b_userdata)
-		tx.Users().Names().Set([]byte(u.Name), u.ID)
+		u.ID = NextKey(tx.Users().Data())
+		tx.Users().Names().Put([]byte(u.Name), u.ID)
 	}
 	userdata, _ := json.Marshal(u)
-	
-	b_userdata.Set(u.ID, userdata)
+	tx.Users().Data().Put(u.ID, userdata)
+}
+
+func (u *User) SetPassword(password string) {
+	u.Password, _ = bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+}
+
+func (u *User) CheckPassword(password string) bool {
+	err := bcrypt.CompareHashAndPassword(u.Password, []byte(password))
+	if err == nil {
+		return true
+	}
+	return false
 }

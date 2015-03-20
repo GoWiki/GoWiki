@@ -20,7 +20,7 @@ func GetConfig(t *bolt.Tx) *Config {
 }
 
 func (c *Config) Save(t *bolt.Tx) {
-	tx := TX{t}
+	tx := &TX{t}
 	configdata, _ := json.Marshal(c)
-	tx.Config().Set([]byte("Main"), configdata)
+	tx.Config().Put([]byte("Main"), configdata)
 }

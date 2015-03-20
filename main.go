@@ -16,7 +16,6 @@ import (
 	"github.com/gowiki/greentuesday"
 	"github.com/justinas/alice"
 	"github.com/microcosm-cc/bluemonday"
-	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/net/html"
 )
 
@@ -61,13 +60,9 @@ func New() *Wiki {
 	}
 	err = db.Update(func(tx *bolt.Tx) error {
 		SetupBuckets(tx)
-		wiki.config = GetConfig(tx)
-		if !wiki.config.InitDone {
-			wiki.config.InitDone = true
-			wiki.config.Theme = "default"
 
-			wiki.config.Save()
-		}
+		wiki.config = GetConfig(tx)
+
 		return nil
 	})
 	wiki.DB = db
@@ -250,24 +245,50 @@ func (w *Wiki) LoginFormHandler(rw http.ResponseWriter, req *http.Request) {
 }
 
 func (w *Wiki) SetupFormHandler(rw http.ResponseWriter, req *http.Request) {
+	if w.config.InitDone {
+		http.Redirect(rw, req, UrlToPath(w.router.Get("LoginForm").URLPath()), http.StatusMovedPermanently)
+		return
+	}
 	if err := w.tpl.ExecuteTemplate(rw, "setup.tpl", nil); err != nil {
 		fmt.Println(err)
 	}
 }
 
 func (w *Wiki) LoginHandler(rw http.ResponseWriter, req *http.Request) {
-	if err := w.tpl.ExecuteTemplate(rw, "login.tpl", nil); err != nil {
-		fmt.Println(err)
-	}
+	w.DB.View(func(tx *bolt.Tx) error {
+		u := GetUser(tx, req.FormValue("username"))
+		if u != nil && u.CheckPassword(req.FormValue("password")) {
+			s := w.store.Get(req)
+			s.User = u
+			w.store.Save(req, rw, s)
+			http.Redirect(rw, req, s.PostLoginRedirect, http.StatusTemporaryRedirect)
+		} else {
+			if err := w.tpl.ExecuteTemplate(rw, "login.tpl", nil); err != nil {
+				fmt.Println(err)
+			}
+		}
+		return nil
+	})
 }
 
 func (w *Wiki) SetupHandler(rw http.ResponseWriter, req *http.Request) {
-	u := &User{}
-	u.Name = req.FormValue("username")
-	u.Password = bcrypt.GenerateFromPassword(req.FormValue("password"), bcrypt.DefaultCost)
-	u.Save()
-	s := w.store.Get(req)
-	s.User = u
+	if w.config.InitDone {
+		http.Redirect(rw, req, UrlToPath(w.router.Get("LoginForm").URLPath()), http.StatusMovedPermanently)
+		return
+	}
+	w.DB.Update(func(tx *bolt.Tx) error {
+		w.config.InitDone = true
+		w.config.Save(tx)
+		u := &User{}
+		u.Name = req.FormValue("username")
+		u.SetPassword(req.FormValue("password"))
+		u.Save(tx)
+		s := w.store.Get(req)
+		s.User = u
+		w.store.Save(req, rw, s)
+		http.Redirect(rw, req, "/", http.StatusTemporaryRedirect)
+		return nil
+	})
 }
 
 func (w *Wiki) CheckAuth(next http.Handler) http.Handler {
@@ -276,6 +297,8 @@ func (w *Wiki) CheckAuth(next http.Handler) http.Handler {
 		if session.User != nil {
 			next.ServeHTTP(rw, req)
 		} else {
+			session.PostLoginRedirect = req.URL.Path
+			w.store.Save(req, rw, session)
 			http.Redirect(rw, req, UrlToPath(w.router.Get("LoginForm").URLPath()), http.StatusTemporaryRedirect)
 		}
 	})

@@ -7,9 +7,10 @@ import (
 )
 
 type Session struct {
-	ID         string
-	User       *User
-	LastAccess *time.Time
+	ID                string
+	User              *User
+	LastAccess        *time.Time
+	PostLoginRedirect string
 }
 
 type MemoryStore struct {
@@ -28,16 +29,24 @@ func newMemoryStore() *MemoryStore {
 }
 
 func (m *MemoryStore) Get(r *http.Request) *Session {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
 	if s, ok := m.contexts[r]; ok {
 		return s
 	}
 	c, err := r.Cookie("GoWiki")
 	if err != nil {
-		return &Session{}
+		s := &Session{}
+		s.ID = GetRandomID()
+		m.store[s.ID] = s
+		return s
 	}
 	s, ok := m.store[c.Value]
 	if !ok {
-		s = &Session{}
+		s := &Session{}
+		s.ID = GetRandomID()
+		m.store[s.ID] = s
+		return s
 	}
 	return s
 }
