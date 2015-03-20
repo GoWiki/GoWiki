@@ -16,6 +16,7 @@ import (
 	"github.com/gowiki/greentuesday"
 	"github.com/justinas/alice"
 	"github.com/microcosm-cc/bluemonday"
+	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/net/html"
 )
 
@@ -27,6 +28,7 @@ type Wiki struct {
 	policy  *bluemonday.Policy
 	gpolicy *greentuesday.Policy
 	store   *MemoryStore
+	config  *Config
 }
 
 func (w *Wiki) WikiLink(href string, text string) (link string) {
@@ -59,6 +61,13 @@ func New() *Wiki {
 	}
 	err = db.Update(func(tx *bolt.Tx) error {
 		SetupBuckets(tx)
+		wiki.config = GetConfig(tx)
+		if !wiki.config.InitDone {
+			wiki.config.InitDone = true
+			wiki.config.Theme = "default"
+
+			wiki.config.Save()
+		}
 		return nil
 	})
 	wiki.DB = db
@@ -93,8 +102,8 @@ func New() *Wiki {
 	wiki.router = mux.NewRouter()
 	wiki.router.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir("static/default"))))
 	wiki.router.Handle("/", http.RedirectHandler("/Home", http.StatusMovedPermanently))
-	wiki.router.Handle("/Setup/{token}", mainChain.ThenFunc(wiki.SetupFormHandler)).Methods("GET").Name("SetupForm")
-	wiki.router.Handle("/Setup/{token}", mainChain.ThenFunc(wiki.SetupHandler)).Methods("POST").Name("Setup")
+	wiki.router.Handle("/Setup", mainChain.ThenFunc(wiki.SetupFormHandler)).Methods("GET").Name("SetupForm")
+	wiki.router.Handle("/Setup", mainChain.ThenFunc(wiki.SetupHandler)).Methods("POST").Name("Setup")
 	wiki.router.Handle("/Login", mainChain.ThenFunc(wiki.LoginFormHandler)).Methods("GET").Name("LoginForm")
 	wiki.router.Handle("/Login", mainChain.ThenFunc(wiki.LoginHandler)).Methods("POST").Name("Login")
 
@@ -253,9 +262,12 @@ func (w *Wiki) LoginHandler(rw http.ResponseWriter, req *http.Request) {
 }
 
 func (w *Wiki) SetupHandler(rw http.ResponseWriter, req *http.Request) {
-	if err := w.tpl.ExecuteTemplate(rw, "setup.tpl", nil); err != nil {
-		fmt.Println(err)
-	}
+	u := &User{}
+	u.Name = req.FormValue("username")
+	u.Password = bcrypt.GenerateFromPassword(req.FormValue("password"), bcrypt.DefaultCost)
+	u.Save()
+	s := w.store.Get(req)
+	s.User = u
 }
 
 func (w *Wiki) CheckAuth(next http.Handler) http.Handler {
