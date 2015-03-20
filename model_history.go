@@ -13,13 +13,15 @@ type Event struct {
 	DateTime time.Time
 }
 
-func (p Event) GetData(tx *bolt.Tx) []byte {
-	b_data := tx.Bucket(bn_pages).Bucket(bn_data)
+func (p Event) GetData(t *bolt.Tx) []byte {
+	tx := &TX{t}
+	b_data := tx.Pages().Data()
 	return b_data.Get(p.DataID)
 }
 
-func SaveData(tx *bolt.Tx, pagedata []byte) ([]byte, error) {
-	b_data := tx.Bucket(bn_pages).Bucket(bn_data)
+func SaveData(t *bolt.Tx, pagedata []byte) ([]byte, error) {
+	tx := &TX{t}
+	b_data := tx.Pages().Data()
 	key := NextKey(b_data)
 	b_data.Put(key, pagedata)
 	return key, nil
@@ -27,4 +29,8 @@ func SaveData(tx *bolt.Tx, pagedata []byte) ([]byte, error) {
 
 type History struct {
 	Events []*Event
+}
+
+func (h *History) AddEvent(e Event) {
+	h.Events = append(h.Events, &e)
 }

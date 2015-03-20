@@ -2,6 +2,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/base64"
 	"fmt"
 	"html/template"
 	"log"
@@ -9,6 +11,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/andyleap/cajun"
 	"github.com/boltdb/bolt"
@@ -43,10 +46,6 @@ func (w *Wiki) WikiLink(href string, text string) (link string) {
 	return
 }
 
-func init() {
-
-}
-
 func main() {
 	wiki := New()
 	http.ListenAndServe(":3000", wiki.router)
@@ -76,6 +75,7 @@ func New() *Wiki {
 		"PageNav":    wiki.PageNav,
 		"Route":      wiki.Route,
 		"GetContent": wiki.GetContent,
+		"EncodeID":   wiki.EncodeID,
 	}).ParseGlob("templates/default/*"))
 
 	wiki.tpl = tpl
@@ -92,7 +92,8 @@ func New() *Wiki {
 	wiki.store = newMemoryStore()
 
 	mainChain := alice.New(wiki.store.ContextClear)
-	authChain := mainChain.Append(wiki.CheckAuth)
+	authChain := mainChain.Append(wiki.CheckAuth(AuthMember))
+	adminChain := mainChain.Append(wiki.CheckAuth(AuthAdmin))
 
 	wiki.router = mux.NewRouter()
 	wiki.router.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir("static/default"))))
@@ -102,7 +103,13 @@ func New() *Wiki {
 	wiki.router.Handle("/Login", mainChain.ThenFunc(wiki.LoginFormHandler)).Methods("GET").Name("LoginForm")
 	wiki.router.Handle("/Login", mainChain.ThenFunc(wiki.LoginHandler)).Methods("POST").Name("Login")
 
+	wiki.router.Handle("/favicon.ico", http.NotFoundHandler())
+
+	wiki.router.Handle("/Admin", adminChain.ThenFunc(wiki.LoginHandler)).Methods("POST").Name("Admin")
+
 	wiki.router.Handle("/{page:[^/]*}/edit", authChain.ThenFunc(wiki.EditHandler)).Methods("GET").Name("Edit")
+	wiki.router.Handle("/{page:[^/]*}/history", mainChain.ThenFunc(wiki.HistoryHandler)).Methods("GET").Name("History")
+	wiki.router.Handle("/{page:[^/]*}/version/{ver}", mainChain.ThenFunc(wiki.PageVersionHandler)).Methods("GET").Name("PageVersion")
 	wiki.router.Handle("/{page:[^/]*}", mainChain.ThenFunc(wiki.PageHandler)).Methods("GET").Name("Read")
 	wiki.router.Handle("/{page:[^/]*}", authChain.ThenFunc(wiki.UpdateHandler)).Methods("POST").Name("Update")
 
@@ -112,6 +119,7 @@ func New() *Wiki {
 type PageNavData struct {
 	Read    string
 	Edit    string
+	History string
 	Section string
 }
 
@@ -122,10 +130,15 @@ func UrlToPath(url *url.URL, err error) string {
 	return url.Path
 }
 
+func (w *Wiki) EncodeID(id []byte) string {
+	return base64.URLEncoding.EncodeToString(id)
+}
+
 func (w *Wiki) PageNav(Slug string, Section string) PageNavData {
 	return PageNavData{
 		Read:    UrlToPath(w.router.Get("Read").URLPath("page", Slug)),
 		Edit:    UrlToPath(w.router.Get("Edit").URLPath("page", Slug)),
+		History: UrlToPath(w.router.Get("History").URLPath("page", Slug)),
 		Section: Section,
 	}
 }
@@ -179,6 +192,75 @@ func (w *Wiki) PageHandler(rw http.ResponseWriter, req *http.Request) {
 
 }
 
+func (w *Wiki) HistoryHandler(rw http.ResponseWriter, req *http.Request) {
+	vars := mux.Vars(req)
+	w.DB.View(func(tx *bolt.Tx) error {
+		page, _ := GetPage(tx, vars["page"])
+		if page != nil {
+			rw.Header().Set("Content-Type", "text/html")
+
+			data := struct {
+				Name   string
+				Slug   string
+				Events []*Event
+			}{
+				vars["page"],
+				vars["page"],
+				page.History.Events,
+			}
+
+			if err := w.tpl.ExecuteTemplate(rw, "history.tpl", data); err != nil {
+				fmt.Println(err)
+			}
+		} else {
+			http.Redirect(rw, req, UrlToPath(w.router.Get("Edit").URLPath("page", vars["page"])), http.StatusTemporaryRedirect)
+		}
+		return nil
+	})
+
+}
+
+func (w *Wiki) PageVersionHandler(rw http.ResponseWriter, req *http.Request) {
+	vars := mux.Vars(req)
+	w.DB.View(func(tx *bolt.Tx) error {
+		page, _ := GetPage(tx, vars["page"])
+		if page != nil {
+			var pagedata []byte
+			verid, _ := base64.URLEncoding.DecodeString(vars["ver"])
+			for _, v := range page.History.Events {
+				if bytes.Equal(v.DataID, verid) {
+					pagedata = v.GetData(tx)
+				}
+			}
+			if pagedata == nil {
+				return nil
+			}
+
+			unsafe, _ := w.render.Transform(string(pagedata))
+			html := w.gpolicy.Massage(w.policy.Sanitize(unsafe))
+			rw.Header().Set("Content-Type", "text/html")
+
+			data := struct {
+				Content template.HTML
+				Name    string
+				Slug    string
+			}{
+				template.HTML(html),
+				vars["page"],
+				vars["page"],
+			}
+
+			if err := w.tpl.ExecuteTemplate(rw, "view.tpl", data); err != nil {
+				fmt.Println(err)
+			}
+		} else {
+			http.Redirect(rw, req, UrlToPath(w.router.Get("Edit").URLPath("page", vars["page"])), http.StatusTemporaryRedirect)
+		}
+		return nil
+	})
+
+}
+
 func (w *Wiki) UpdateHandler(rw http.ResponseWriter, req *http.Request) {
 	vars := mux.Vars(req)
 	w.DB.Update(func(tx *bolt.Tx) error {
@@ -188,11 +270,11 @@ func (w *Wiki) UpdateHandler(rw http.ResponseWriter, req *http.Request) {
 
 		key, _ := SaveData(tx, []byte(data))
 		if page != nil {
-			//page.History.Events = append(page.History.Events, page.Current)
+			page.History.AddEvent(page.Current)
 		} else {
 			page = &Page{}
 		}
-		page.Current = Event{DataID: key, IP: req.RemoteAddr}
+		page.Current = Event{DateTime: time.Now(), DataID: key, IP: req.RemoteAddr}
 		page.Save(tx, vars["page"])
 		return nil
 	})
@@ -261,7 +343,7 @@ func (w *Wiki) LoginHandler(rw http.ResponseWriter, req *http.Request) {
 			s := w.store.Get(req)
 			s.User = u
 			w.store.Save(req, rw, s)
-			http.Redirect(rw, req, s.PostLoginRedirect, http.StatusTemporaryRedirect)
+			http.Redirect(rw, req, s.PostLoginRedirect, http.StatusFound)
 		} else {
 			if err := w.tpl.ExecuteTemplate(rw, "login.tpl", nil); err != nil {
 				fmt.Println(err)
@@ -282,6 +364,7 @@ func (w *Wiki) SetupHandler(rw http.ResponseWriter, req *http.Request) {
 		u := &User{}
 		u.Name = req.FormValue("username")
 		u.SetPassword(req.FormValue("password"))
+		u.GiveAuth(AuthMember).GiveAuth(AuthModerator).GiveAuth(AuthAdmin)
 		u.Save(tx)
 		s := w.store.Get(req)
 		s.User = u
@@ -291,15 +374,17 @@ func (w *Wiki) SetupHandler(rw http.ResponseWriter, req *http.Request) {
 	})
 }
 
-func (w *Wiki) CheckAuth(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
-		session := w.store.Get(req)
-		if session.User != nil {
-			next.ServeHTTP(rw, req)
-		} else {
-			session.PostLoginRedirect = req.URL.Path
-			w.store.Save(req, rw, session)
-			http.Redirect(rw, req, UrlToPath(w.router.Get("LoginForm").URLPath()), http.StatusTemporaryRedirect)
-		}
-	})
+func (w *Wiki) CheckAuth(auth Auth) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+			session := w.store.Get(req)
+			if session.User != nil && session.User.HasAuth(auth) {
+				next.ServeHTTP(rw, req)
+			} else {
+				session.PostLoginRedirect = req.URL.Path
+				w.store.Save(req, rw, session)
+				http.Redirect(rw, req, UrlToPath(w.router.Get("LoginForm").URLPath()), http.StatusTemporaryRedirect)
+			}
+		})
+	}
 }

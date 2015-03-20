@@ -7,10 +7,33 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+type Auth int
+
+const (
+	_                  = iota
+	AuthMember    Auth = iota
+	AuthModerator Auth = iota
+	AuthAdmin     Auth = iota
+)
+
+func (a Auth) String() string {
+	switch a {
+	case AuthMember:
+		return "Member"
+	case AuthModerator:
+		return "Moderator"
+	case AuthAdmin:
+		return "Admin"
+	default:
+		return ""
+	}
+}
+
 type User struct {
 	ID       []byte
 	Name     string
 	Password []byte
+	Auths    []Auth
 }
 
 func GetUser(t *bolt.Tx, name string) *User {
@@ -45,4 +68,20 @@ func (u *User) CheckPassword(password string) bool {
 		return true
 	}
 	return false
+}
+
+func (u *User) HasAuth(auth Auth) bool {
+	for _, a := range u.Auths {
+		if a == auth {
+			return true
+		}
+	}
+	return false
+}
+
+func (u *User) GiveAuth(auth Auth) *User {
+	if !u.HasAuth(auth) {
+		u.Auths = append(u.Auths, auth)
+	}
+	return u
 }

@@ -8,7 +8,7 @@ import (
 
 type Page struct {
 	Current Event
-	History []byte
+	History History
 }
 
 func GetPage(t *bolt.Tx, Name string) (*Page, error) {
