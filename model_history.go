@@ -8,9 +8,10 @@ import (
 
 type Event struct {
 	DataID   []byte
-	Author   []byte
+	AuthorID []byte
 	IP       string
 	DateTime time.Time
+	Author   *SafeUser `json:"-"`
 }
 
 func (p Event) GetData(t *bolt.Tx) []byte {
@@ -33,4 +34,13 @@ type History struct {
 
 func (h *History) AddEvent(e Event) {
 	h.Events = append(h.Events, &e)
+}
+
+func (h *History) LoadUsers(t *bolt.Tx) {
+	for _, v := range h.Events {
+		v.Author = GetSafeUserByID(t, v.AuthorID)
+		if v.Author == nil {
+			v.Author = &SafeUser{Name: "anonymous"}
+		}
+	}
 }

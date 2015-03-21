@@ -55,7 +55,7 @@
 <form action="{{Route "Login"}}" method="POST">
 <input type="text" name="username" placeholder="Username" class="form-control">
 <input type="password" name="password" placeholder="Password" class="form-control">
-<input type="submit" class="btn btn-primary">
+<input type="submit" class="btn btn-primary" name="login" value="Login"><input type="submit" class="btn btn-default" value="Create Account" name="create">
 </form>
 </div>
 </div>

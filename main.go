@@ -102,6 +102,7 @@ func New() *Wiki {
 	wiki.router.Handle("/Setup", mainChain.ThenFunc(wiki.SetupHandler)).Methods("POST").Name("Setup")
 	wiki.router.Handle("/Login", mainChain.ThenFunc(wiki.LoginFormHandler)).Methods("GET").Name("LoginForm")
 	wiki.router.Handle("/Login", mainChain.ThenFunc(wiki.LoginHandler)).Methods("POST").Name("Login")
+	wiki.router.Handle("/Logout", authChain.ThenFunc(wiki.LogoutHandler)).Methods("GET").Name("Logout")
 
 	wiki.router.Handle("/favicon.ico", http.NotFoundHandler())
 
@@ -161,6 +162,22 @@ func (w *Wiki) Route(Route string, Params ...string) string {
 	return UrlToPath(w.router.Get(Route).URLPath(Params...))
 }
 
+type UserInfoType struct {
+	LoggedIn bool
+	Name     string
+}
+
+func (w *Wiki) UserInfo(req *http.Request) UserInfoType {
+	s := w.store.Get(req)
+	ui := UserInfoType{}
+
+	if s.User != nil {
+		ui.LoggedIn = true
+		ui.Name = s.User.Name
+	}
+	return ui
+}
+
 func (w *Wiki) PageHandler(rw http.ResponseWriter, req *http.Request) {
 	vars := mux.Vars(req)
 	w.DB.View(func(tx *bolt.Tx) error {
@@ -175,10 +192,12 @@ func (w *Wiki) PageHandler(rw http.ResponseWriter, req *http.Request) {
 				Content template.HTML
 				Name    string
 				Slug    string
+				User    UserInfoType
 			}{
 				template.HTML(html),
 				vars["page"],
 				vars["page"],
+				w.UserInfo(req),
 			}
 
 			if err := w.tpl.ExecuteTemplate(rw, "view.tpl", data); err != nil {
@@ -198,15 +217,17 @@ func (w *Wiki) HistoryHandler(rw http.ResponseWriter, req *http.Request) {
 		page, _ := GetPage(tx, vars["page"])
 		if page != nil {
 			rw.Header().Set("Content-Type", "text/html")
-
+			page.History.LoadUsers(tx)
 			data := struct {
 				Name   string
 				Slug   string
 				Events []*Event
+				User   UserInfoType
 			}{
 				vars["page"],
 				vars["page"],
 				page.History.Events,
+				w.UserInfo(req),
 			}
 
 			if err := w.tpl.ExecuteTemplate(rw, "history.tpl", data); err != nil {
@@ -244,10 +265,12 @@ func (w *Wiki) PageVersionHandler(rw http.ResponseWriter, req *http.Request) {
 				Content template.HTML
 				Name    string
 				Slug    string
+				User    UserInfoType
 			}{
 				template.HTML(html),
 				vars["page"],
 				vars["page"],
+				w.UserInfo(req),
 			}
 
 			if err := w.tpl.ExecuteTemplate(rw, "view.tpl", data); err != nil {
@@ -264,6 +287,7 @@ func (w *Wiki) PageVersionHandler(rw http.ResponseWriter, req *http.Request) {
 func (w *Wiki) UpdateHandler(rw http.ResponseWriter, req *http.Request) {
 	vars := mux.Vars(req)
 	w.DB.Update(func(tx *bolt.Tx) error {
+		s := w.store.Get(req)
 		page, _ := GetPage(tx, vars["page"])
 		data := req.FormValue("data")
 		data = strings.Replace(data, "\r\n", "\n", -1)
@@ -274,7 +298,7 @@ func (w *Wiki) UpdateHandler(rw http.ResponseWriter, req *http.Request) {
 		} else {
 			page = &Page{}
 		}
-		page.Current = Event{DateTime: time.Now(), DataID: key, IP: req.RemoteAddr}
+		page.Current = Event{DateTime: time.Now(), DataID: key, IP: req.RemoteAddr, AuthorID: s.User.ID}
 		page.Save(tx, vars["page"])
 		return nil
 	})
@@ -292,10 +316,12 @@ func (w *Wiki) EditHandler(rw http.ResponseWriter, req *http.Request) {
 				Content string
 				Name    string
 				Slug    string
+				User    UserInfoType
 			}{
 				string(pagedata),
 				vars["page"],
 				vars["page"],
+				w.UserInfo(req),
 			}
 
 			if err := w.tpl.ExecuteTemplate(rw, "edit.tpl", data); err != nil {
@@ -337,20 +363,44 @@ func (w *Wiki) SetupFormHandler(rw http.ResponseWriter, req *http.Request) {
 }
 
 func (w *Wiki) LoginHandler(rw http.ResponseWriter, req *http.Request) {
-	w.DB.View(func(tx *bolt.Tx) error {
-		u := GetUser(tx, req.FormValue("username"))
-		if u != nil && u.CheckPassword(req.FormValue("password")) {
-			s := w.store.Get(req)
-			s.User = u
-			w.store.Save(req, rw, s)
-			http.Redirect(rw, req, s.PostLoginRedirect, http.StatusFound)
-		} else {
-			if err := w.tpl.ExecuteTemplate(rw, "login.tpl", nil); err != nil {
-				fmt.Println(err)
+	if req.FormValue("login") != "" {
+		w.DB.View(func(tx *bolt.Tx) error {
+			u := GetUser(tx, req.FormValue("username"))
+
+			if u != nil && u.CheckPassword(req.FormValue("password")) {
+				s := w.store.Get(req)
+				s.User = u
+				w.store.Save(req, rw, s)
+				http.Redirect(rw, req, s.PostLoginRedirect, http.StatusFound)
+			} else {
+				if err := w.tpl.ExecuteTemplate(rw, "login.tpl", nil); err != nil {
+					fmt.Println(err)
+				}
 			}
-		}
-		return nil
-	})
+			return nil
+		})
+	} else if req.FormValue("create") != "" {
+		w.DB.Update(func(tx *bolt.Tx) error {
+			u := GetUser(tx, req.FormValue("username"))
+			if u == nil {
+				u := &User{Name: req.FormValue("username")}
+				u.SetPassword(req.FormValue("password"))
+				u.GiveAuth(AuthMember)
+				u.Save(tx)
+			} else {
+				if err := w.tpl.ExecuteTemplate(rw, "login.tpl", nil); err != nil {
+					fmt.Println(err)
+				}
+			}
+			return nil
+		})
+	}
+}
+
+func (w *Wiki) LogoutHandler(rw http.ResponseWriter, req *http.Request) {
+	s := w.store.Get(req)
+	w.store.Destroy(req, rw, s)
+	http.Redirect(rw, req, "/", http.StatusFound)
 }
 
 func (w *Wiki) SetupHandler(rw http.ResponseWriter, req *http.Request) {

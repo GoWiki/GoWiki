@@ -36,6 +36,11 @@ type User struct {
 	Auths    []Auth
 }
 
+type SafeUser struct {
+	Name  string
+	Auths []Auth
+}
+
 func GetUser(t *bolt.Tx, name string) *User {
 	tx := TX{t}
 	userid := tx.Users().Names().Get([]byte(name))
@@ -44,6 +49,17 @@ func GetUser(t *bolt.Tx, name string) *User {
 		return nil
 	}
 	u := &User{}
+	json.Unmarshal(userdata, u)
+	return u
+}
+
+func GetSafeUserByID(t *bolt.Tx, id []byte) *SafeUser {
+	tx := TX{t}
+	userdata := tx.Users().Data().Get(id)
+	if userdata == nil {
+		return nil
+	}
+	u := &SafeUser{}
 	json.Unmarshal(userdata, u)
 	return u
 }

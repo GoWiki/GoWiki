@@ -53,7 +53,7 @@
 
 {{range .Events}}
 {{$id := EncodeID .DataID}}
-<a href="{{Route "PageVersion" "page" $.Slug "ver" $id}}">{{.DateTime}} - {{.IP}}</a><br/>
+<a href="{{Route "PageVersion" "page" $.Slug "ver" $id}}">{{.DateTime}} - {{.Author.Name}}</a><br/>
 {{else}}
 No Prior Events
 {{end}}

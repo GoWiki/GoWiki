@@ -51,6 +51,11 @@ func (m *MemoryStore) Get(r *http.Request) *Session {
 	return s
 }
 
+func (m *MemoryStore) Destroy(r *http.Request, w http.ResponseWriter, s *Session) {
+	delete(m.store, s.ID)
+	delete(m.contexts, r)
+}
+
 func (m *MemoryStore) Save(r *http.Request, w http.ResponseWriter, s *Session) error {
 	http.SetCookie(w, &http.Cookie{
 		Name:    "GoWiki",
