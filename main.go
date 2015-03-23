@@ -376,10 +376,12 @@ func (w *Wiki) EditHandler(rw http.ResponseWriter, req *http.Request) {
 				Content string
 				Name    string
 				Slug    string
+				User    UserInfoType
 			}{
 				"",
 				vars["page"],
 				vars["page"],
+				w.UserInfo(req),
 			}
 			if err := w.tpl.ExecuteTemplate(rw, "edit.tpl", data); err != nil {
 				fmt.Println(err)
