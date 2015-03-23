@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"html/template"
 	"net/http"
 
 	"github.com/boltdb/bolt"
@@ -12,7 +13,20 @@ func (w *Wiki) SetupFormHandler(rw http.ResponseWriter, req *http.Request) {
 		http.Redirect(rw, req, UrlToPath(w.router.Get("LoginForm").URLPath()), http.StatusMovedPermanently)
 		return
 	}
-	if err := w.tpl.ExecuteTemplate(rw, "setup.tpl", nil); err != nil {
+	form := NewForm(w.tpl)
+	form.NewString("Username", "username", "", "Username").NewPassword("Password", "password", "", "Password")
+
+	data := struct {
+		Name     string
+		FormName string
+		Form     template.HTML
+	}{
+		"Initial Setup",
+		"Initial Setup",
+		form.Render(),
+	}
+
+	if err := w.tpl.ExecuteTemplate(rw, "form.tpl", data); err != nil {
 		fmt.Println(err)
 	}
 }

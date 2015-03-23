@@ -68,12 +68,8 @@
 </div>
 <div class="col-sm-9">
 <div class="content no-nav">
-<form method="POST">
-<h1>Initial Setup</h1>
-<input type="text" name="username" placeholder="Username" class="form-control">
-<input type="password" name="password" placeholder="Password" class="form-control">
-<input type="submit" class="btn btn-primary">
-</form>
+<h1>{{.FormName}}</h1>
+{{.Form}}
 </div>
 </div>
 
