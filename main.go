@@ -4,11 +4,14 @@ package main
 import (
 	"bytes"
 	"encoding/base64"
+	"flag"
 	"fmt"
 	"html/template"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -31,6 +34,7 @@ type Wiki struct {
 	gpolicy *greentuesday.Policy
 	store   *MemoryStore
 	config  *Config
+	theme   *Theme
 }
 
 func (w *Wiki) WikiLink(href string, text string) (link string) {
@@ -46,9 +50,23 @@ func (w *Wiki) WikiLink(href string, text string) (link string) {
 	return
 }
 
+var (
+	GoLaunch = flag.Bool("GoLaunch", false, "Used for triggering GoLaunch functionality")
+)
+
 func main() {
+	var socket net.Listener
+	server := &http.Server{}
+	flag.Parse()
+
+	if *GoLaunch {
+		socket, _ = net.FileListener(os.NewFile(3, ""))
+	} else {
+		socket, _ = net.Listen("tcp", ":3000")
+	}
 	wiki := New()
-	http.ListenAndServe(":3000", wiki.router)
+	server.Handler = wiki.router
+	server.Serve(socket)
 }
 
 func New() *Wiki {
@@ -62,6 +80,12 @@ func New() *Wiki {
 
 		wiki.config = GetConfig(tx)
 
+		if !wiki.config.FilesLoaded {
+			InitThemes(tx)
+			wiki.config.FilesLoaded = true
+			wiki.config.Save(tx)
+		}
+
 		return nil
 	})
 	wiki.DB = db
@@ -71,12 +95,18 @@ func New() *Wiki {
 		return nil
 	}
 
-	tpl := template.Must(template.New("default").Funcs(template.FuncMap{
+	theme := &Theme{Name: "default"}
+	wiki.theme = theme
+	tpl := template.New("default").Funcs(template.FuncMap{
 		"PageNav":    wiki.PageNav,
 		"Route":      wiki.Route,
 		"GetContent": wiki.GetContent,
 		"EncodeID":   wiki.EncodeID,
-	}).ParseGlob("templates/default/*"))
+	})
+	db.View(func(tx *bolt.Tx) error {
+		theme.ParseTemplates(tx, tpl)
+		return nil
+	})
 
 	wiki.tpl = tpl
 
@@ -96,7 +126,7 @@ func New() *Wiki {
 	adminChain := mainChain.Append(wiki.CheckAuth(AuthAdmin))
 
 	wiki.router = mux.NewRouter()
-	wiki.router.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir("static/default"))))
+	wiki.router.PathPrefix("/static/").Handler(mainChain.ThenFunc(wiki.StaticHandler))
 	wiki.router.Handle("/", http.RedirectHandler("/Home", http.StatusMovedPermanently))
 	wiki.router.Handle("/Setup", mainChain.ThenFunc(wiki.SetupFormHandler)).Methods("GET").Name("SetupForm")
 	wiki.router.Handle("/Setup", mainChain.ThenFunc(wiki.SetupHandler)).Methods("POST").Name("Setup")
@@ -176,6 +206,19 @@ func (w *Wiki) UserInfo(req *http.Request) UserInfoType {
 		ui.Name = s.User.Name
 	}
 	return ui
+}
+
+func (w *Wiki) StaticHandler(rw http.ResponseWriter, req *http.Request) {
+	w.DB.View(func(tx *bolt.Tx) error {
+		name := strings.TrimPrefix(req.RequestURI, "/static/")
+		data := w.theme.GetFile(tx, name)
+		if strings.HasSuffix(name, ".css") {
+			rw.Header().Add("content-type", "text/css")
+		}
+		rw.Write(data)
+		return nil
+	})
+
 }
 
 func (w *Wiki) PageHandler(rw http.ResponseWriter, req *http.Request) {

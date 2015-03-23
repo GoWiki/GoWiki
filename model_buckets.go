@@ -14,6 +14,7 @@ var (
 	bn_users   []byte = []byte("users")
 	bn_emails  []byte = []byte("emails")
 	bn_config  []byte = []byte("config")
+	bn_themes  []byte = []byte("themes")
 )
 
 func SetupBuckets(tx *bolt.Tx) {
@@ -26,9 +27,10 @@ func SetupBuckets(tx *bolt.Tx) {
 	users.CreateBucketIfNotExists(bn_names)
 	users.CreateBucketIfNotExists(bn_emails)
 	tx.CreateBucketIfNotExists(bn_config)
+	tx.CreateBucketIfNotExists(bn_themes)
 }
 
-type TX struct {
+type WikiTx struct {
 	*bolt.Tx
 }
 type Pages struct {
@@ -38,16 +40,20 @@ type Users struct {
 	*bolt.Bucket
 }
 
-func (tx *TX) Users() *Users {
+func (tx *WikiTx) Users() *Users {
 	return &Users{tx.Bucket(bn_users)}
 }
 
-func (tx *TX) Pages() *Pages {
+func (tx *WikiTx) Pages() *Pages {
 	return &Pages{tx.Bucket(bn_pages)}
 }
 
-func (tx *TX) Config() *bolt.Bucket {
+func (tx *WikiTx) Config() *bolt.Bucket {
 	return tx.Bucket(bn_config)
+}
+
+func (tx *WikiTx) Themes() *bolt.Bucket {
+	return tx.Bucket(bn_themes)
 }
 
 func (p *Pages) Names() *bolt.Bucket {

@@ -15,13 +15,13 @@ type Event struct {
 }
 
 func (p Event) GetData(t *bolt.Tx) []byte {
-	tx := &TX{t}
+	tx := &WikiTx{t}
 	b_data := tx.Pages().Data()
 	return b_data.Get(p.DataID)
 }
 
 func SaveData(t *bolt.Tx, pagedata []byte) ([]byte, error) {
-	tx := &TX{t}
+	tx := &WikiTx{t}
 	b_data := tx.Pages().Data()
 	key := NextKey(b_data)
 	b_data.Put(key, pagedata)

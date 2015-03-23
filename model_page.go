@@ -12,7 +12,7 @@ type Page struct {
 }
 
 func GetPage(t *bolt.Tx, Name string) (*Page, error) {
-	tx := &TX{t}
+	tx := &WikiTx{t}
 	page := &Page{}
 	if Name == "" {
 		Name = "/"
@@ -26,7 +26,7 @@ func GetPage(t *bolt.Tx, Name string) (*Page, error) {
 }
 
 func (p Page) Save(t *bolt.Tx, Name string) error {
-	tx := &TX{t}
+	tx := &WikiTx{t}
 	pagedata, err := json.Marshal(p)
 	if err != nil {
 		return err

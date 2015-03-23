@@ -42,7 +42,7 @@ type SafeUser struct {
 }
 
 func GetUser(t *bolt.Tx, name string) *User {
-	tx := TX{t}
+	tx := &WikiTx{t}
 	userid := tx.Users().Names().Get([]byte(name))
 	userdata := tx.Users().Data().Get(userid)
 	if userdata == nil {
@@ -54,7 +54,7 @@ func GetUser(t *bolt.Tx, name string) *User {
 }
 
 func GetSafeUserByID(t *bolt.Tx, id []byte) *SafeUser {
-	tx := TX{t}
+	tx := &WikiTx{t}
 	userdata := tx.Users().Data().Get(id)
 	if userdata == nil {
 		return nil
@@ -65,7 +65,7 @@ func GetSafeUserByID(t *bolt.Tx, id []byte) *SafeUser {
 }
 
 func (u *User) Save(t *bolt.Tx) {
-	tx := &TX{t}
+	tx := &WikiTx{t}
 	if u.ID == nil {
 		u.ID = NextKey(tx.Users().Data())
 		tx.Users().Names().Put([]byte(u.Name), u.ID)
