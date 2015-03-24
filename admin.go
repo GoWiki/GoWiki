@@ -10,11 +10,13 @@ import (
 
 func (w *Wiki) SetupFormHandler(rw http.ResponseWriter, req *http.Request) {
 	if w.config.InitDone {
-		http.Redirect(rw, req, UrlToPath(w.router.Get("LoginForm").URLPath()), http.StatusMovedPermanently)
+		http.Redirect(rw, req, UrlToPath(w.router.Get("LoginForm").URLPath()), http.StatusFound)
 		return
 	}
 	form := NewForm(w.tpl)
-	form.NewString("Username", "username", "", "Username").NewPassword("Password", "password", "", "Password")
+	form.NewString("Username", "Username", "Username")
+	form.NewPassword("Password", "Password", "Password")
+	form.NewButtons().AddButton("Finish Setup", "", "primary")
 
 	data := struct {
 		Name     string
@@ -23,7 +25,7 @@ func (w *Wiki) SetupFormHandler(rw http.ResponseWriter, req *http.Request) {
 	}{
 		"Initial Setup",
 		"Initial Setup",
-		form.Render(),
+		form.Render(nil),
 	}
 
 	if err := w.tpl.ExecuteTemplate(rw, "form.tpl", data); err != nil {
@@ -33,15 +35,28 @@ func (w *Wiki) SetupFormHandler(rw http.ResponseWriter, req *http.Request) {
 
 func (w *Wiki) SetupHandler(rw http.ResponseWriter, req *http.Request) {
 	if w.config.InitDone {
-		http.Redirect(rw, req, UrlToPath(w.router.Get("LoginForm").URLPath()), http.StatusMovedPermanently)
+		http.Redirect(rw, req, UrlToPath(w.router.Get("LoginForm").URLPath()), http.StatusFound)
 		return
 	}
 	w.DB.Update(func(tx *bolt.Tx) error {
 		w.config.InitDone = true
 		w.config.Save(tx)
 		u := &User{}
-		u.Name = req.FormValue("username")
-		u.SetPassword(req.FormValue("password"))
+		form := NewForm(w.tpl)
+		form.NewString("Username", "Username", "Username")
+		form.NewPassword("Password", "Password", "Password")
+		form.NewButtons().AddButton("Finish Setup", "", "primary")
+
+		data := struct {
+			Username string
+			Password string
+		}{}
+
+		form.Parse(req.FormValue, &data)
+
+		u.Name = data.Username
+		u.SetPassword(data.Password)
+
 		u.GiveAuth(AuthMember).GiveAuth(AuthModerator).GiveAuth(AuthAdmin)
 		u.Save(tx)
 		s := w.store.Get(req)
