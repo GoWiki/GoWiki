@@ -13,10 +13,8 @@ func (w *Wiki) SetupFormHandler(rw http.ResponseWriter, req *http.Request) {
 		http.Redirect(rw, req, UrlToPath(w.router.Get("LoginForm").URLPath()), http.StatusFound)
 		return
 	}
-	form := NewForm(w.tpl)
-	form.NewString("Username", "Username", "Username")
-	form.NewPassword("Password", "Password", "Password")
-	form.NewButtons().AddButton("Finish Setup", "", "primary")
+
+	form := w.fb.GetForm("SetupForm")
 
 	data := struct {
 		Name     string
@@ -25,7 +23,7 @@ func (w *Wiki) SetupFormHandler(rw http.ResponseWriter, req *http.Request) {
 	}{
 		"Initial Setup",
 		"Initial Setup",
-		form.Render(nil),
+		form.Render(nil, "/Setup", "POST"),
 	}
 
 	if err := w.tpl.ExecuteTemplate(rw, "form.tpl", data); err != nil {
@@ -42,10 +40,8 @@ func (w *Wiki) SetupHandler(rw http.ResponseWriter, req *http.Request) {
 		w.config.InitDone = true
 		w.config.Save(tx)
 		u := &User{}
-		form := NewForm(w.tpl)
-		form.NewString("Username", "Username", "Username")
-		form.NewPassword("Password", "Password", "Password")
-		form.NewButtons().AddButton("Finish Setup", "", "primary")
+
+		form := w.fb.GetForm("SetupForm")
 
 		data := struct {
 			Username string

@@ -53,11 +53,26 @@ type FormField interface {
 
 type Form struct {
 	fields []FormField
-	tpl    *template.Template
+	fb     *FormBuilder
 }
 
-func NewForm(tpl *template.Template) *Form {
-	return &Form{tpl: tpl}
+type FormBuilder struct {
+	forms map[string]*Form
+	w     *Wiki
+}
+
+func NewFormBuilder(w *Wiki) *FormBuilder {
+	return &FormBuilder{forms: make(map[string]*Form), w: w}
+}
+
+func (fb *FormBuilder) NewForm(Name string) *Form {
+	form := &Form{fb: fb}
+	fb.forms[Name] = form
+	return form
+}
+
+func (fb *FormBuilder) GetForm(Name string) *Form {
+	return fb.forms[Name]
 }
 
 func (f *Form) NewBool(Name, Var string) {
@@ -84,7 +99,7 @@ func (f *Form) Parse(Values func(string) string, Dest interface{}) {
 	}
 }
 
-func (f *Form) Render(Values interface{}) template.HTML {
+func (f *Form) Render(Values interface{}, Action, Method string) template.HTML {
 	fields := make([]template.HTML, 0, len(f.fields))
 	for _, v := range f.fields {
 		fields = append(fields, v.Render(Values))
@@ -96,10 +111,10 @@ func (f *Form) Render(Values interface{}) template.HTML {
 		Method string
 	}{
 		fields,
-		"/Setup",
-		"POST",
+		Action,
+		Method,
 	}
-	if err := f.tpl.ExecuteTemplate(buf, "form/form.tpl", data); err != nil {
+	if err := f.fb.w.tpl.ExecuteTemplate(buf, "form/form.tpl", data); err != nil {
 		fmt.Println(err)
 	}
 	return template.HTML(buf.String())
@@ -135,7 +150,7 @@ func (b *BoolField) Render(Values interface{}) template.HTML {
 		val,
 		b,
 	}
-	b.form.tpl.ExecuteTemplate(buf, "form/string.tpl", data)
+	b.form.fb.w.tpl.ExecuteTemplate(buf, "form/string.tpl", data)
 	return template.HTML(buf.String())
 }
 
@@ -168,7 +183,7 @@ func (s *StringField) Render(Values interface{}) template.HTML {
 		val,
 		s,
 	}
-	s.form.tpl.ExecuteTemplate(buf, "form/string.tpl", data)
+	s.form.fb.w.tpl.ExecuteTemplate(buf, "form/string.tpl", data)
 	return template.HTML(buf.String())
 }
 
@@ -195,7 +210,7 @@ func (s *SubmitField) Render(Values interface{}) template.HTML {
 	}{
 		s,
 	}
-	s.form.tpl.ExecuteTemplate(buf, "form/submit.tpl", data)
+	s.form.fb.w.tpl.ExecuteTemplate(buf, "form/submit.tpl", data)
 	return template.HTML(buf.String())
 }
 

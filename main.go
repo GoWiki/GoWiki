@@ -31,6 +31,7 @@ type Wiki struct {
 	store   *MemoryStore
 	config  *Config
 	theme   *Theme
+	fb      *FormBuilder
 }
 
 var (
@@ -93,6 +94,20 @@ func New() *Wiki {
 
 	wiki.tpl = tpl
 
+	wiki.fb = NewFormBuilder(wiki)
+
+	setupform := wiki.fb.NewForm("SetupForm")
+	setupform.NewString("Username", "Username", "Username")
+	setupform.NewPassword("Password", "Password", "Password")
+	setupform.NewButtons().AddButton("Finish Setup", "", "primary")
+
+	loginform := wiki.fb.NewForm("LoginForm")
+	loginform.NewString("Username", "Username", "Username")
+	loginform.NewPassword("Password", "Password", "Password")
+	buttons := loginform.NewButtons()
+	buttons.AddButton("Login", "Login", "primary")
+	buttons.AddButton("Create Account", "Create", "default")
+
 	wiki.render = cajun.New()
 	wiki.render.WikiLink = wiki
 	wiki.policy = bluemonday.UGCPolicy()
@@ -144,40 +159,56 @@ func (w *Wiki) StaticHandler(rw http.ResponseWriter, req *http.Request) {
 }
 
 func (w *Wiki) LoginFormHandler(rw http.ResponseWriter, req *http.Request) {
-	if err := w.tpl.ExecuteTemplate(rw, "login.tpl", nil); err != nil {
+	form := w.fb.GetForm("LoginForm")
+
+	data := struct {
+		Name     string
+		FormName string
+		Form     template.HTML
+	}{
+		"Login",
+		"Login",
+		form.Render(nil, w.Route("Login"), "POST"),
+	}
+
+	if err := w.tpl.ExecuteTemplate(rw, "form.tpl", data); err != nil {
 		fmt.Println(err)
 	}
 }
 
 func (w *Wiki) LoginHandler(rw http.ResponseWriter, req *http.Request) {
-	if req.FormValue("login") != "" {
+	form := w.fb.GetForm("LoginForm")
+	data := struct {
+		Username string
+		Password string
+		Login    bool
+		Create   bool
+	}{}
+	form.Parse(req.FormValue, &data)
+	if data.Login {
 		w.DB.View(func(tx *bolt.Tx) error {
-			u := GetUser(tx, req.FormValue("username"))
+			u := GetUser(tx, data.Username)
 
-			if u != nil && u.CheckPassword(req.FormValue("password")) {
+			if u != nil && u.CheckPassword(data.Password) {
 				s := w.store.Get(req)
 				s.User = u
 				w.store.Save(req, rw, s)
 				http.Redirect(rw, req, s.PostLoginRedirect, http.StatusFound)
 			} else {
-				if err := w.tpl.ExecuteTemplate(rw, "login.tpl", nil); err != nil {
-					fmt.Println(err)
-				}
+				w.LoginFormHandler(rw, req)
 			}
 			return nil
 		})
-	} else if req.FormValue("create") != "" {
+	} else if data.Create {
 		w.DB.Update(func(tx *bolt.Tx) error {
-			u := GetUser(tx, req.FormValue("username"))
+			u := GetUser(tx, data.Username)
 			if u == nil {
-				u := &User{Name: req.FormValue("username")}
-				u.SetPassword(req.FormValue("password"))
+				u := &User{Name: data.Username}
+				u.SetPassword(data.Password)
 				u.GiveAuth(AuthMember)
 				u.Save(tx)
 			} else {
-				if err := w.tpl.ExecuteTemplate(rw, "login.tpl", nil); err != nil {
-					fmt.Println(err)
-				}
+				w.LoginFormHandler(rw, req)
 			}
 			return nil
 		})
