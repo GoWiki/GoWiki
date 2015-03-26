@@ -32,6 +32,7 @@ func (a Auth) String() string {
 type User struct {
 	ID       []byte
 	Name     string
+	Email    string
 	Password []byte
 	Auths    []Auth
 }

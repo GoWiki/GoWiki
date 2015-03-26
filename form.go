@@ -39,6 +39,8 @@ type SubmitButton struct {
 	Var   string
 	Value string
 	Class string
+	Type  string
+	Href  string
 }
 
 type SubmitField struct {
@@ -79,8 +81,8 @@ func (f *Form) NewBool(Name, Var string) {
 	f.fields = append(f.fields, &BoolField{Name: Name, Var: Var, form: f})
 }
 
-func (f *Form) NewString(Name, Var, Placeholder string) {
-	f.fields = append(f.fields, &StringField{Name: Name, Var: Var, Placeholder: Placeholder, form: f})
+func (f *Form) NewString(Name, Var, Placeholder, Specialty string) {
+	f.fields = append(f.fields, &StringField{Name: Name, Var: Var, Placeholder: Placeholder, Specialty: Specialty, form: f})
 }
 
 func (f *Form) NewPassword(Name, Var, Placeholder string) {
@@ -214,7 +216,13 @@ func (s *SubmitField) Render(Values interface{}) template.HTML {
 	return template.HTML(buf.String())
 }
 
-func (s *SubmitField) AddButton(Value, Var, Class string) *SubmitField {
-	s.Buttons = append(s.Buttons, &SubmitButton{Value: Value, Var: Var, Class: Class})
-	return s
+func (s *SubmitField) AddButton(Value, Var, Class string) *SubmitButton {
+	btn := &SubmitButton{Value: Value, Var: Var, Class: Class, Type: "submit"}
+	s.Buttons = append(s.Buttons, btn)
+	return btn
+}
+
+func (s *SubmitButton) Link(href string) {
+	s.Type = "link"
+	s.Href = href
 }

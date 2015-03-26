@@ -40,22 +40,28 @@ var (
 
 func main() {
 	var socket net.Listener
+	var db string
+
 	server := &http.Server{}
 	flag.Parse()
 
+	db = os.Getenv("GOWIKIDB")
+	if db == "" {
+		db = "gowiki.db"
+	}
 	if *GoLaunch {
 		socket, _ = net.FileListener(os.NewFile(3, ""))
 	} else {
 		socket, _ = net.Listen("tcp", ":3000")
 	}
-	wiki := New()
+	wiki := New(db)
 	server.Handler = wiki.router
 	server.Serve(socket)
 }
 
-func New() *Wiki {
+func New(database string) *Wiki {
 	wiki := &Wiki{}
-	db, err := bolt.Open("gowiki.db", 0600, nil)
+	db, err := bolt.Open(database, 0600, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -96,18 +102,6 @@ func New() *Wiki {
 
 	wiki.fb = NewFormBuilder(wiki)
 
-	setupform := wiki.fb.NewForm("SetupForm")
-	setupform.NewString("Username", "Username", "Username")
-	setupform.NewPassword("Password", "Password", "Password")
-	setupform.NewButtons().AddButton("Finish Setup", "", "primary")
-
-	loginform := wiki.fb.NewForm("LoginForm")
-	loginform.NewString("Username", "Username", "Username")
-	loginform.NewPassword("Password", "Password", "Password")
-	buttons := loginform.NewButtons()
-	buttons.AddButton("Login", "Login", "primary")
-	buttons.AddButton("Create Account", "Create", "default")
-
 	wiki.render = cajun.New()
 	wiki.render.WikiLink = wiki
 	wiki.policy = bluemonday.UGCPolicy()
@@ -130,6 +124,8 @@ func New() *Wiki {
 	wiki.router.Handle("/Setup", mainChain.ThenFunc(wiki.SetupHandler)).Methods("POST").Name("Setup")
 	wiki.router.Handle("/Login", mainChain.ThenFunc(wiki.LoginFormHandler)).Methods("GET").Name("LoginForm")
 	wiki.router.Handle("/Login", mainChain.ThenFunc(wiki.LoginHandler)).Methods("POST").Name("Login")
+	wiki.router.Handle("/Create", mainChain.ThenFunc(wiki.UserCreateFormHandler)).Methods("GET").Name("UserCreateForm")
+	wiki.router.Handle("/Create", mainChain.ThenFunc(wiki.UserCreateHandler)).Methods("POST").Name("UserCreate")
 	wiki.router.Handle("/Logout", authChain.ThenFunc(wiki.LogoutHandler)).Methods("GET").Name("Logout")
 
 	wiki.router.Handle("/favicon.ico", http.NotFoundHandler())
@@ -141,6 +137,25 @@ func New() *Wiki {
 	wiki.router.Handle("/{page:[^/]*}/version/{ver}", mainChain.ThenFunc(wiki.PageVersionHandler)).Methods("GET").Name("PageVersion")
 	wiki.router.Handle("/{page:[^/]*}", mainChain.ThenFunc(wiki.PageHandler)).Methods("GET").Name("Read")
 	wiki.router.Handle("/{page:[^/]*}", authChain.ThenFunc(wiki.UpdateHandler)).Methods("POST").Name("Update")
+
+	setupform := wiki.fb.NewForm("SetupForm")
+	setupform.NewString("Username", "Username", "Username", "text")
+	setupform.NewPassword("Password", "Password", "Password")
+	setupform.NewButtons().AddButton("Finish Setup", "", "primary")
+
+	loginform := wiki.fb.NewForm("LoginForm")
+	loginform.NewString("Username", "Username", "Username", "text")
+	loginform.NewPassword("Password", "Password", "Password")
+	buttons := loginform.NewButtons()
+	buttons.AddButton("Login", "Login", "primary")
+	buttons.AddButton("Create Account", "Create", "default").Link(wiki.Route("UserCreate"))
+
+	usercreateform := wiki.fb.NewForm("UserCreateForm")
+	usercreateform.NewString("Username", "Username", "Username", "text")
+	usercreateform.NewString("Email", "Email", "Email", "email")
+	usercreateform.NewPassword("Password", "Password", "Password")
+	usercreatebuttons := usercreateform.NewButtons()
+	usercreatebuttons.AddButton("Create Account", "Create", "default")
 
 	return wiki
 }
@@ -181,38 +196,67 @@ func (w *Wiki) LoginHandler(rw http.ResponseWriter, req *http.Request) {
 	data := struct {
 		Username string
 		Password string
-		Login    bool
-		Create   bool
 	}{}
 	form.Parse(req.FormValue, &data)
-	if data.Login {
-		w.DB.View(func(tx *bolt.Tx) error {
-			u := GetUser(tx, data.Username)
+	w.DB.View(func(tx *bolt.Tx) error {
+		u := GetUser(tx, data.Username)
 
-			if u != nil && u.CheckPassword(data.Password) {
-				s := w.store.Get(req)
-				s.User = u
-				w.store.Save(req, rw, s)
-				http.Redirect(rw, req, s.PostLoginRedirect, http.StatusFound)
-			} else {
-				w.LoginFormHandler(rw, req)
-			}
-			return nil
-		})
-	} else if data.Create {
-		w.DB.Update(func(tx *bolt.Tx) error {
-			u := GetUser(tx, data.Username)
-			if u == nil {
-				u := &User{Name: data.Username}
-				u.SetPassword(data.Password)
-				u.GiveAuth(AuthMember)
-				u.Save(tx)
-			} else {
-				w.LoginFormHandler(rw, req)
-			}
-			return nil
-		})
+		if u != nil && u.CheckPassword(data.Password) {
+			s := w.store.Get(req)
+			s.User = u
+			w.store.Save(req, rw, s)
+			http.Redirect(rw, req, s.PostLoginRedirect, http.StatusFound)
+		} else {
+			w.LoginFormHandler(rw, req)
+		}
+		return nil
+	})
+}
+
+func (w *Wiki) UserCreateFormHandler(rw http.ResponseWriter, req *http.Request) {
+	form := w.fb.GetForm("UserCreateForm")
+
+	data := struct {
+		Name     string
+		FormName string
+		Form     template.HTML
+	}{
+		"Create User",
+		"Create User",
+		form.Render(nil, w.Route("UserCreate"), "POST"),
 	}
+
+	if err := w.tpl.ExecuteTemplate(rw, "form.tpl", data); err != nil {
+		fmt.Println(err)
+	}
+}
+
+func (w *Wiki) UserCreateHandler(rw http.ResponseWriter, req *http.Request) {
+	form := w.fb.GetForm("UserCreateForm")
+	data := struct {
+		Username string
+		Email    string
+		Password string
+	}{}
+	form.Parse(req.FormValue, &data)
+
+	w.DB.Update(func(tx *bolt.Tx) error {
+		u := GetUser(tx, data.Username)
+		if u == nil {
+			u := &User{Name: data.Username, Email: data.Email}
+			u.SetPassword(data.Password)
+			u.GiveAuth(AuthMember)
+			u.Save(tx)
+			s := w.store.Get(req)
+			s.User = u
+			w.store.Save(req, rw, s)
+			http.Redirect(rw, req, "/", http.StatusFound)
+		} else {
+			w.LoginFormHandler(rw, req)
+		}
+		return nil
+	})
+
 }
 
 func (w *Wiki) LogoutHandler(rw http.ResponseWriter, req *http.Request) {
