@@ -36,6 +36,7 @@ type Wiki struct {
 
 var (
 	GoLaunch = flag.Bool("GoLaunch", false, "Used for triggering GoLaunch functionality")
+	Port     = flag.Int("port", 3000, "Port to serve the wiki on")
 )
 
 func main() {
@@ -49,10 +50,15 @@ func main() {
 	if db == "" {
 		db = "gowiki.db"
 	}
+	var err error
 	if *GoLaunch {
 		socket, _ = net.FileListener(os.NewFile(3, ""))
 	} else {
-		socket, _ = net.Listen("tcp", ":3000")
+		socket, err = net.Listen("tcp", fmt.Sprintf(":%d", *Port))
+	}
+	if err != nil {
+		fmt.Println("Failed to open socket: ", err)
+		os.Exit(1)
 	}
 	wiki := New(db)
 	server.Handler = wiki.router
